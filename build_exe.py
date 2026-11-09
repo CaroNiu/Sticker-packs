@@ -46,10 +46,10 @@ def main():
         "--noconfirm", "--clean", "--windowed",
         "--name", "表情包工坊",
         "--add-data", f"{VENDOR / 'sticker.py'}{SEP}vendor",
-        str(ROOT / "main.py"),
     ]
     if not IS_MAC:
-        cmd.insert(-2, "--onefile")  # Windows 单文件 exe；Mac 用 .app bundle（onefile 在 mac 双击体验差）
+        cmd.append("--onefile")  # Windows 单文件 exe；Mac 用 .app bundle（onefile 在 mac 双击体验差）
+    cmd.append(str(ROOT / "main.py"))
     print(">>", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=ROOT)
 
