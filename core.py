@@ -117,6 +117,8 @@ def load_config():
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
+    else:
+        save_config(cfg)  # 首次运行落盘模板（exe 场景：用户直接编辑 exe 旁的 config.json 填 key）
     return cfg
 
 
