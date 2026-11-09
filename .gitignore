@@ -1,0 +1,13 @@
+# API Key 以明文存在 config.json，禁止提交
+config.json
+# 项目产物（角色图、生成图、投稿包）
+packs/
+__pycache__/
+*.pyc
+# 打包产物与中间文件
+dist/
+build/
+*.spec
+vendor/
+# 本地打包脚本生成的副本
+*.log

@@ -1,0 +1,815 @@
+# -*- coding: utf-8 -*-
+"""表情包工坊 GUI 核心封装。
+
+复用 ray-sticker-shop skill 的 scripts/sticker.py 流水线（提示词、GIF 压缩、
+微信规范检查全部来自 skill 本体，不复制逻辑），只做编排：进度回调、
+环境变量注入、结果结构化。
+"""
+import argparse
+import base64
+import contextlib
+import concurrent.futures as cf
+import importlib.util
+import io
+import json
+import os
+import re
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.request
+import zipfile
+from pathlib import Path
+
+from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+# 打包成 exe 后，__file__ 指向临时解压目录（一次性），配置/作品必须放 exe 旁边才持久
+FROZEN = getattr(sys, "frozen", False)
+if FROZEN:
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+CONFIG_PATH = PROJECT_ROOT / "config.json"
+DEFAULT_SKILL_DIR = Path.home() / ".claude" / "skills" / "ray-sticker-shop" / "scripts"
+# 打包内置的 skill 副本（build_exe.py 复制进 vendor/，随 exe 分发）
+BUNDLED_SKILL = Path(getattr(sys, "_MEIPASS", "") or PROJECT_ROOT) / "vendor" / "sticker.py"
+
+# ---------- API 调用日志（线程安全，GUI 订阅显示）----------
+
+import collections
+import threading
+
+_api_log_buf = collections.deque(maxlen=800)
+_api_log_lock = threading.Lock()
+_api_log_listeners = []
+_api_log_total = 0   # 历史总行数（deque 会环绕，用总行数精确对位）
+
+
+def api_log(msg):
+    global _api_log_total
+    line = time.strftime("[%H:%M:%S] ") + msg
+    with _api_log_lock:
+        _api_log_buf.append(line)
+        _api_log_total += 1
+    for cb in list(_api_log_listeners):
+        try:
+            cb(line)
+        except Exception:
+            pass
+
+
+def add_log_listener(cb):
+    _api_log_listeners.append(cb)
+
+
+def get_api_log():
+    """返回 (日志行列表, 历史总行数)；列表可能只含最近 800 行。"""
+    with _api_log_lock:
+        return list(_api_log_buf), _api_log_total
+
+DEFAULT_CONFIG = {
+    "api_key": "",
+    "base_url": "",
+    "skill_dir": str(DEFAULT_SKILL_DIR),
+    "packs_dir": str(PROJECT_ROOT / "packs"),
+    "gen_model": "gpt-image-2.6-flare",
+    "character_model": "gpt-image-2.6-sunburst",
+    "quality": "medium",
+    "text_api_key": "",
+    "text_base_url": "",
+    "text_model": "glm-5.3-flash",
+    "jobs": 4,
+    "style": "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
+    "frame_ms": 120,
+    "background": "transparent",
+    "recent_projects": [],
+}
+
+BANNED = ["微信", "wechat", "腾讯", "官方", "认证", "正版"]
+
+# 新项目默认 8 张：3 回复、2 情绪、2 关系、1 场景（参考 skill 的 references/writing.md）
+DEFAULT_STICKERS = [
+    {"word": "收到", "caption": "收到", "action": "nods twice firmly and gives a big thumbs up, then returns to standing"},
+    {"word": "好的", "caption": "好的", "action": "salutes with one paw, eyes bright, then lowers the paw back down"},
+    {"word": "稍等", "caption": "稍等", "action": "holds up one finger, glances at an imaginary watch, then looks back up"},
+    {"word": "哈哈哈", "caption": "哈哈哈", "action": "rolls on the floor laughing with legs kicking in the air, then sits back up"},
+    {"word": "无语", "caption": "无语", "action": "stares blankly with a flat mouth, then slowly turns the head away with a big sigh"},
+    {"word": "谢谢", "caption": "谢谢", "action": "bows deeply with both hands together, then pops back up with a big smile"},
+    {"word": "抱抱", "caption": "抱抱", "action": "opens both arms wide and squeezes an invisible friend, cheeks glowing"},
+    {"word": "加油", "caption": "加油", "action": "raises both fists in the air cheering with sparkling eyes, then pumps fists again"},
+]
+
+ASSET_SPECS = [
+    ("cover", (240, 240), "封面图.png", 500, True),
+    ("icon", (50, 50), "聊天面板图标.png", 100, True),
+    ("banner", (750, 400), "详情页横幅.png", 500, False),
+    ("reward_guide", (750, 560), "赞赏引导图.png", 500, False),
+    ("reward_thanks", (750, 750), "赞赏致谢图.png", 500, False),
+]
+
+
+# ---------- 配置 ----------
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_PATH.exists():
+        try:
+            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return cfg
+
+
+def save_config(cfg):
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ---------- skill 加载 ----------
+
+def load_sticker(skill_dir):
+    f = Path(skill_dir) / "sticker.py"
+    if not f.exists() and BUNDLED_SKILL.exists():
+        f = BUNDLED_SKILL  # 独立运行包：目标机器没装 skill 时用内置副本兜底
+    if not f.exists():
+        raise FileNotFoundError(
+            f"找不到 skill 脚本：{f}\n"
+            "请先 git clone https://github.com/imraywang/ray-sticker-shop "
+            "~/.claude/skills/ray-sticker-shop，或在「设置」里指定脚本目录。"
+        )
+    spec = importlib.util.spec_from_file_location("sticker_shop_pipeline", str(f))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    # Windows 兼容补丁：skill 的 load_pack 用默认编码 read_text()，中文 Windows
+    # 默认 GBK，读 UTF-8 的 pack.json（含中文）会 UnicodeDecodeError。
+    # 不改 skill 源文件（避免 git pull 冲突），运行时覆盖为显式 UTF-8。
+    def _load_pack_utf8(pack_dir, _mod=mod):
+        p = Path(pack_dir)
+        pack = json.loads((p / "pack.json").read_text(encoding="utf-8"))
+        return p, pack
+
+    mod.load_pack = _load_pack_utf8
+
+    # 火山方舟适配：base_url 是 volces.com 时改走方舟的 JSON 接口（_edit_ark），
+    # 其余（OpenAI 官方或任意 OpenAI 兼容网关）仍用 skill 原版 multipart 逻辑。
+    # 按调用时的环境变量分发，不改 skill 源文件。
+    _orig_edit = mod._edit
+
+    def _edit_dispatch(image_path, prompt, size, background, model, quality, log_path, _orig=_orig_edit):
+        if "volces.com" in os.environ.get("OPENAI_BASE_URL", ""):
+            return _edit_ark(image_path, prompt, size, background, model, log_path)
+        # 走原版接口时明确记一条日志：这条路没有埋点、长超时，出问题极易表现为“静默无日志”
+        api_log("⚠ 路由 → skill 原版 multipart 接口（base_url 非方舟地址，排查设置里的 API 地址）")
+        return _orig(image_path, prompt, size, background, model, quality, log_path)
+
+    mod._edit = _edit_dispatch
+    return mod
+
+
+@contextlib.contextmanager
+def env_patch(cfg):
+    """把 GUI 设置里的 API 配置注入 os.environ，调用完恢复。"""
+    keys = ("OPENAI_API_KEY", "OPENAI_BASE_URL")
+    old = {k: os.environ.get(k) for k in keys}
+    if cfg.get("api_key"):
+        os.environ["OPENAI_API_KEY"] = cfg["api_key"]
+    if cfg.get("base_url"):
+        os.environ["OPENAI_BASE_URL"] = cfg["base_url"]
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _make_transparent(raw, tol=30):
+    """方舟模型输出 RGB 无透明通道，把「要求透明底」的图从四边洪泛填充抠出透明区。"""
+    from PIL import Image
+    from collections import deque
+    im = Image.open(io.BytesIO(raw)).convert("RGBA")
+    w, h = im.size
+    px = im.load()
+    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+    if any(c[3] == 0 for c in corners):
+        return raw  # 已有透明通道，直接用
+    bgs = []
+    for c in corners:
+        if not any(abs(c[0] - b[0]) <= 12 and abs(c[1] - b[1]) <= 12 and abs(c[2] - b[2]) <= 12 for b in bgs):
+            bgs.append(c)
+
+    def near(c):
+        return any(abs(c[0] - b[0]) <= tol and abs(c[1] - b[1]) <= tol and abs(c[2] - b[2]) <= tol for b in bgs)
+
+    api_log("✂ 开始抠透明底（洪泛填充）…")
+    _t0 = time.time()
+
+    seen = bytearray(w * h)
+    q = deque()
+    for x in range(w):
+        q += [(x, 0), (x, h - 1)]
+    for y in range(h):
+        q += [(0, y), (w - 1, y)]
+    while q:
+        x, y = q.pop()
+        if x < 0 or y < 0 or x >= w or y >= h or seen[y * w + x]:
+            continue
+        c = px[x, y]
+        if not near(c):
+            continue
+        seen[y * w + x] = 1
+        px[x, y] = (c[0], c[1], c[2], 0)
+        q += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    api_log(f"✂ 透明底完成，耗时 {time.time() - _t0:.1f}s")
+    return buf.getvalue()
+
+
+def _edit_ark(image_path, prompt, size, background, model, log_path):
+    """火山方舟（volces.com）图片接口适配，返回图片字节（契约同 skill 原版 _edit）。
+
+    方舟不走 OpenAI 的 multipart /images/edits，而是 JSON POST
+    {base}/images/generations，参考图以 data-URL 数组传入。
+    base_url 原样使用：Coding 套餐入口（…/api/plan/v3）与标准入口（…/api/v3）
+    都能出图，不要改写用户的地址。
+    """
+    base = os.environ.get("OPENAI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+    base = re.sub(r"/images/generations$", "", base)  # 容错：把完整接口地址粘进 base_url 也能用
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        sys.exit("缺 OPENAI_API_KEY。没有 key 时用 prompts 命令拿提示词，到 ChatGPT 或 Codex 里出图，再跑 build。")
+    # MIME 必须和图片真实格式一致，写错（如 JPEG 标成 png）方舟会 500
+    fmt = {"PNG": "png", "JPEG": "jpeg", "WEBP": "webp", "BMP": "bmp"}.get(Image.open(image_path).format, "png")
+    b64img = base64.b64encode(Path(image_path).read_bytes()).decode()
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "image": [f"data:image/{fmt};base64,{b64img}"],
+        "response_format": "b64_json",
+        "watermark": False,  # 默认 true 会加「AI生成」角标，投稿素材不能带
+    }
+    if "seededit" not in model.lower():
+        # seededit（i2i 编辑）不支持 size；seedream 系给显式 2048x2048：
+        # 5.0 系要求总像素 ≥2560x1440，skill 里的 960/1024 会被拒，2K 档各方舟模型通用，
+        # build 环节本来就会切格/缩放，不影响产物。
+        body["size"] = "2048x2048"
+    if "seedream-5" in model.lower():
+        body["output_format"] = "png"  # 5.x 支持；4.x 无此字段
+    req = urllib.request.Request(
+        f"{base}/images/generations",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    for attempt in range(4):
+        api_log(f"▶ 图片生成 model={model} size={body.get('size', '(自动)')} "
+                f"参考图={Path(image_path).name} 尝试 {attempt + 1}/4（一般 60–120 秒）")
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                data = json.load(r)
+            api_log(f"✅ 服务端响应 OK，耗时 {time.time() - t0:.0f}s")
+            break
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode(errors="replace")[:400]
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                api_log(f"⚠ HTTP {e.code} → {5 * (attempt + 1)}s 后重试")
+                time.sleep(5 * (attempt + 1))
+                continue
+            hint = ""
+            if e.code == 401 and key.startswith("ark-") and "plan" not in base:
+                hint = ("（ark- 开头的是 Coding 套餐 key，标准入口 /api/v3 不认；"
+                        "base_url 请填 https://ark.cn-beijing.volces.com/api/plan/v3）")
+            elif "agent plan" in msg.lower():
+                hint = "（当前入口/套餐不包含该图片生成模型）"
+            api_log(f"❌ HTTP {e.code}，放弃本次")
+            raise RuntimeError(f"HTTP {e.code}: {msg}{hint}") from None
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt == 3:
+                api_log("❌ 网络失败，放弃本次")
+                raise RuntimeError(str(e)) from None
+            api_log(f"⚠ 网络异常（{type(e).__name__}）→ {5 * (attempt + 1)}s 后重试")
+            time.sleep(5 * (attempt + 1))
+    d = (data.get("data") or [{}])[0]
+    if d.get("error"):
+        err = d["error"]
+        raise RuntimeError(f"方舟生成失败：{err.get('code')} {err.get('message')}")
+    u = data.get("usage") or {}
+    # 方舟按张计费（模型×分辨率定价），与 OpenAI token 计费不同，无法折算美元，按 0 记，
+    # 实际花费以火山引擎控制台账单为准。
+    with open(log_path, "a") as f:
+        f.write(json.dumps({"size": body.get("size", "auto"), "usage": {"provider": "ark", **u}, "usd": 0.0}) + "\n")
+    if d.get("b64_json"):
+        raw = base64.b64decode(d["b64_json"])
+    else:
+        with urllib.request.urlopen(d["url"], timeout=120) as r:  # 兜底：返回 url（24h 有效）就当场下载
+            raw = r.read()
+    api_log(f"📷 收到图片 {len(raw) // 1024}KB（{model}）")
+    if background == "transparent":
+        raw = _make_transparent(raw)
+    return raw
+
+
+def test_connection(cfg):
+    """设置页「测试连接」：只探测网络与鉴权，不产生费用。"""
+    base = (cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+    base = re.sub(r"/images/generations$", "", base)  # 容错：粘成完整接口地址时剥掉
+    req = urllib.request.Request(
+        f"{base}/models",
+        headers={"Authorization": f"Bearer {cfg.get('api_key')}"} if cfg.get("api_key") else {},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return f"✅ 连接正常（HTTP {r.status}）"
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return "⚠ 网络已通，但鉴权失败（HTTP %d）：检查 API Key" % e.code
+        if e.code == 404:
+            return "⚠ 网络可达；该地址无 /models 探针（方舟 plan 入口属正常），请直接生成实测"
+        return f"✅ 网络可达（HTTP {e.code}）"
+    except Exception as e:
+        return f"❌ 连接失败：{type(e).__name__}: {e}"
+
+
+# ---------- 文案模型（对话补全）----------
+
+COPY_SYSTEM = """你是微信表情开放平台的资深表情包策划师。为角色设计一整套表情文案。
+硬性规范（违反会被平台驳回）：
+- name：表情名称，1-8 个汉字，无标点无空格，不能含"微信/wechat/腾讯/官方/认证/正版"
+- intro：表情介绍，不超过 80 字，讲角色性格或小情景，不能含上述违禁词
+- reward_line：赞赏引导语，5-15 字，与表情强相关
+- stickers：8-12 张。每张：
+  - word：含义词，不超过 4 个汉字，彼此不重复，不带任何标点符号（平台要求）
+  - caption：配字（默认与 word 相同，可加口语化语气字，同样不带违禁词）
+  - action：动作用英文写，必须是一套连贯具体的身体动作（2-3 个动作串联，
+    如 "nods twice firmly, then raises both fists cheering"），
+    不要抽象形容词（不要 cute/happy 这种），动作要能体现该含义词
+- 选题覆盖：3 张日常回复（收到/好的/稍等类）+ 2 张情绪（哈哈/无语类）
+  + 2 张关系互动（谢谢/抱抱类）+ 1-2 张场景梗
+只输出纯 JSON，不要 markdown 代码围栏，不要任何解释文字，格式：
+{"name":"...","intro":"...","reward_line":"...","stickers":[{"word":"...","caption":"...","action":"..."}]}"""
+
+
+def _chat_once(base, key, model, system, user, max_tokens, timeout):
+    """OpenAI 风格对话补全（方舟套餐入口与标准入口、OpenAI 兼容网关都支持）。"""
+    base = re.sub(r"/images/generations$", "", base.rstrip("/"))  # 容错：粘成完整接口地址时剥掉
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    req = urllib.request.Request(
+        f"{base}/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    api_log(f"▶ 文案请求 model={model} 地址={base}/chat/completions")
+    _ct0 = time.time()
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.load(r)
+    api_log(f"💬 文案模型 {model} 响应 OK，耗时 {time.time() - _ct0:.1f}s")
+    if data.get("error"):
+        raise RuntimeError(f"文案模型返回错误：{data['error'].get('message', data['error'])}")
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    return msg.get("content") or msg.get("reasoning_content") or ""
+
+
+def _chat(base, key, model, system, user, max_tokens=3000, timeout=180):
+    last = None
+    for attempt in range(4):
+        try:
+            return _chat_once(base, key, model, system, user, max_tokens, timeout)
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode(errors="replace")[:300]
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                api_log(f"⚠ 文案请求 HTTP {e.code} → {5 * (attempt + 1)}s 后重试")
+                time.sleep(5 * (attempt + 1))
+                last = RuntimeError(f"HTTP {e.code}: {msg}")
+                continue
+            hint = "（鉴权失败：检查文案模型的 API Key）" if e.code in (401, 403) else ""
+            raise RuntimeError(f"HTTP {e.code}: {msg}{hint}") from None
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt == 3:
+                raise RuntimeError(str(e)) from None
+            time.sleep(5 * (attempt + 1))
+            last = e
+    raise RuntimeError(str(last))
+
+
+def _extract_json(text):
+    """从模型输出里抠 JSON：剥代码围栏，失败再抓首尾大括号。"""
+    t = text.strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S)
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", t, flags=re.S)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
+def ai_copywriting(cfg, hint="", style=""):
+    """调文案对话模型，产出整套表情文案初稿（name/intro/reward_line/stickers）。
+
+    文案模型配置（text_*）留空时回落到图片组的 api_key/base_url。
+    返回前做轻清洗：含义词去空格/去重/截 4 字，违禁词配字替换为含义词。
+    """
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").rstrip("/")
+    key = cfg.get("text_api_key") or cfg.get("api_key") or ""
+    model = cfg.get("text_model") or ""
+    if not (base and key and model):
+        raise ValueError("文案模型没配全：设置 → 「文案对话模型」填 API Key、地址和模型名")
+    user = f"角色设定/画风：{style or '可爱Q版'}"
+    if hint:
+        user += f"\n策划灵感提示：{hint}"
+    user += "\n请按系统规则产出整套文案 JSON。"
+    text = _chat(base, key, model, COPY_SYSTEM, user)
+    try:
+        data = _extract_json(text)
+    except Exception:
+        raise ValueError(f"模型输出不是合法 JSON，换模型或重试。输出开头：{text[:120]}")
+
+    name = str(data.get("name") or "").strip()
+    intro = str(data.get("intro") or "").strip()
+    reward = str(data.get("reward_line") or "").strip()
+    raw = data.get("stickers") or []
+    if not isinstance(raw, list) or len(raw) < 8:
+        raise ValueError(f"模型只给出 {len(raw) if isinstance(raw, list) else 0} 张表情，至少要 8 张，请重试")
+
+    seen = set()
+    stickers = []
+    for s in raw:
+        word = re.sub(r"[\s，。！？、,.!?/\\:\"'*<>|]", "", str(s.get("word") or ""))[:4]
+        if not word or word in seen:
+            continue
+        seen.add(word)
+        caption = re.sub(r"\s+", "", str(s.get("caption") or "")) or word
+        for b in BANNED:
+            if b.lower() in caption.lower():
+                caption = word
+                break
+        stickers.append({"word": word, "caption": caption,
+                         "action": str(s.get("action") or "waves hello").strip()})
+    if len(stickers) < 8:
+        raise ValueError(f"清洗后只剩 {len(stickers)} 张有效表情（含义词大量重复），请重试")
+    return {"name": name[:8], "intro": intro[:80], "copyright": "",
+            "reward_line": reward, "stickers": stickers}
+
+
+def test_text_connection(cfg):
+    """设置页「测试文案模型」：发一条小对话验证连通性。"""
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").rstrip("/")
+    key = cfg.get("text_api_key") or cfg.get("api_key") or ""
+    model = cfg.get("text_model") or ""
+    if not (base and key and model):
+        return "❌ 未配全：需要 API Key、地址、模型名"
+    try:
+        out = _chat(base, key, model, "你是回声机", "回复两个字：正常", max_tokens=2048, timeout=60)
+        return f"✅ 文案模型连通，回复：{out[:30]}" if out else "⚠ 连通但模型没吐内容（思考型模型？正常现象，可直接使用）"
+    except RuntimeError as e:
+        m = str(e)
+        if "404" in m:
+            return "❌ 地址路径不对（404）：套餐入口填 …/api/plan，标准入口填 …/api/v3"
+        return f"❌ {m[:180]}"
+    except Exception as e:
+        return f"❌ {type(e).__name__}: {str(e)[:150]}"
+
+
+# ---------- 抽象创意参谋 ----------
+
+IDEAS_SYSTEM = (
+    "你是微信表情包策划师，精通抽象梗与传播规律，给用户出利于传播的原创抽象表情创意。"
+    "每条创意是 JSON 对象 {word, scene, why}：word 为表情文案词 1-4 字（无标点、不重复、上口）；"
+    "scene 为使用场景一句话；why 为传播理由一句话（情绪共鸣/泛用性/玩梗空间）。"
+    "共 12 条，覆盖：高频回复、情绪发泄、抽象玩梗、职场摸鱼、关系互动。"
+    "红线：不出明星、影视动漫游戏角色、二创同人；不碰政治敏感与违禁词；全部原创。"
+    "输出纯 JSON 数组，不要 markdown 代码块，不要解释文字。"
+)
+
+
+def _extract_json_array(text):
+    t = text.strip()
+    if t.startswith("```"):  # 剥掉 markdown 代码栅栏
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t)
+    m = re.search(r"\[.*\]", t, re.S)
+    if m:
+        t = m.group(0)
+    arr = json.loads(t)
+    return arr if isinstance(arr, list) else []
+
+
+def ai_ideas(cfg, topic=""):
+    """让文案模型出「利于传播的抽象表情」选题清单：[{word, scene, why}]。"""
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").strip()
+    key = (cfg.get("text_api_key") or cfg.get("api_key") or "").strip()
+    model = (cfg.get("text_model") or "").strip()
+    if not (base and key and model):
+        raise ValueError("文案模型没配全：需要模型名、API Key、地址（设置里第二组）")
+    user = f"主题方向（可空）：{topic or '不限，给出当下最容易被转发使用的抽象表情创意'}"
+    text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=3000, timeout=120)
+    arr = _extract_json_array(text)
+    seen, ideas = set(), []
+    for it in arr:
+        if not isinstance(it, dict):
+            continue
+        w = re.sub(r"[\s，。！？、,.!?/\\:\"'*<>|]", "", str(it.get("word", "")).strip())[:4]
+        if not w or w in seen:
+            continue
+        seen.add(w)
+        ideas.append({"word": w,
+                      "scene": str(it.get("scene", "")).strip()[:60],
+                      "why": str(it.get("why", "")).strip()[:60]})
+    if len(ideas) < 4:
+        raise ValueError(f"可用创意只有 {len(ideas)} 条，再试一次或换个主题方向")
+    return ideas
+
+
+# ---------- 操作（都在 worker 线程里跑）----------
+
+def make_character(sticker, cfg, photo, out_path, style):
+    """照片 → 卡通角色图。复用 skill 的提示词和计费逻辑。"""
+    ns = argparse.Namespace(
+        photo=str(photo), out=str(out_path), style=style,
+        model=cfg.get("character_model", DEFAULT_CONFIG["character_model"]),
+        quality=cfg.get("quality", "medium"),
+    )
+    buf = io.StringIO()
+    with env_patch(cfg), contextlib.redirect_stdout(buf):
+        sticker.cmd_character(ns)
+    return {"out": str(out_path), "log": buf.getvalue()}
+
+
+def dry_run(sticker, cfg, pack_dir, with_assets=True):
+    """只数要生成几张、估花费，不调 API。角色图缺失时 sys.exit 由调用方接。"""
+    p, pack = sticker.load_pack(str(pack_dir))
+    jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
+                         cfg.get("quality", "medium"), with_assets, None)
+    todo = [j for j in jobs if not j[0].exists()]
+    return {"count": len(todo), "usd": round(len(todo) * 0.052, 2), "total": len(jobs)}
+
+
+def gen_pack(sticker, cfg, pack_dir, with_assets=True, redo=None, progress=None):
+    """生成精灵图和配套素材（对外入口）。
+
+    必须包在 env_patch 里：接口分发器按“调用时”的 OPENAI_BASE_URL 环境变量
+    选方舟/原版接口。漏包会让生成悄悄走错接口——表现为永远“提交中”、
+    一条日志都没有（2026-11-09 修复；此前只有 make_character 包了，gen_pack 漏了）。
+    """
+    with env_patch(cfg):
+        return _gen_pack_impl(sticker, cfg, pack_dir, with_assets, redo, progress)
+
+
+def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress=None):
+    """生成主体。progress(item, kind, msg)，kind ∈ ok/fail/count。"""
+    p, pack = sticker.load_pack(str(pack_dir))
+    redo_set = {int(x) for x in redo if str(x).strip().isdigit()} if redo else None
+    jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
+                         cfg.get("quality", "medium"), with_assets, redo_set)
+    todo = [j for j in jobs if not j[0].exists()]
+    total, done, errors = len(todo), 0, []
+    if progress:
+        progress(None, "total", str(total))
+    if not todo:
+        return {"errors": [], "total": 0, "cost": sticker.total_cost(p)}
+
+    def run_one(job):
+        return job, sticker._gen_one(job)
+
+    with cf.ThreadPoolExecutor(int(cfg.get("jobs") or 4)) as ex:
+        futs = {ex.submit(run_one, j): j for j in todo}
+        for fut in cf.as_completed(futs):
+            job = futs[fut]
+            try:
+                _, msg = fut.result()
+                kind, detail = "ok", msg
+            except SystemExit as e:  # _edit 缺 key 时 sys.exit
+                errors.append(job[0].name)
+                kind, detail = "fail", str(e)
+            except Exception as e:
+                errors.append(job[0].name)
+                kind, detail = "fail", f"{type(e).__name__}: {e}"
+            done += 1
+            if progress:
+                progress(job[0].name, kind, detail)
+                progress(None, "count", f"{done}/{total}")
+    return {"errors": errors, "total": total, "cost": sticker.total_cost(p)}
+
+
+def build_pack(sticker, pack_dir, progress=None):
+    """切帧、合 GIF、出投稿包 + 预览 + 文案 + 交付 zip。"""
+    p, pack = sticker.load_pack(str(pack_dir))
+    sub = p / "submit"
+    gifs = sub / "表情图"
+    gifs.mkdir(parents=True, exist_ok=True)
+    ms = pack.get("frame_ms", 120)
+    bg = pack.get("background", "transparent")
+    rows = []
+    for i, s in enumerate(pack["stickers"], 1):
+        sheet = p / "sheets" / f"{i:02d}.png"
+        if not sheet.exists():
+            if progress:
+                progress(f"{i:02d}", "skip", f"缺精灵图 {sheet.name}，先去上一步生成")
+            continue
+        size, colors, n, border = sticker.build_gif(sheet, gifs / f"{i:02d}.gif", ms, bg, s.get("keep_frames"))
+        flag = "  ⚠ 内容压到格子边，重点看这张" if border > 8 else ""
+        if progress:
+            progress(f"{i:02d}", "ok", f"{s['word']}: {size // 1024}KB {n}帧 {colors}色{flag}")
+        rows.append(gifs / f"{i:02d}.gif")
+    raw = p / "assets_raw"
+    for name, size, fn, kb, alpha in ASSET_SPECS:
+        if (raw / f"{name}.png").exists():
+            sticker._fit_png(raw / f"{name}.png", size, sub / fn, kb * 1024, alpha)
+    sticker._contact_sheet(rows, pack, p / "预览.png")
+    sticker._preview_html(pack, p)
+    sticker._listing(pack, p)
+    with zipfile.ZipFile(p / "交付给客户.zip", "w", zipfile.ZIP_STORED) as z:
+        for g in rows:
+            z.write(g, f"{pack['stickers'][int(g.stem) - 1]['word']}.gif")
+    return {"gifs": [str(g) for g in rows], "submit": str(sub), "cost": sticker.total_cost(p)}
+
+
+def check_pack(sticker, pack_dir):
+    """跑 skill 的微信规范检查，解析 FAIL/WARN。cmd_check 用 sys.exit 报数，这里接住。"""
+    ns = argparse.Namespace(pack=str(pack_dir))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            sticker.cmd_check(ns)
+        except SystemExit as e:
+            if not isinstance(e.code, int) and e.code:
+                return {"fails": [str(e.code)], "warns": [], "text": str(e.code)}
+    fails, warns = [], []
+    for line in buf.getvalue().splitlines():
+        if line.startswith("FAIL "):
+            fails.append(line[5:])
+        elif line.startswith("WARN "):
+            warns.append(line[5:])
+    return {"fails": fails, "warns": warns, "text": buf.getvalue()}
+
+
+def get_prompts(sticker, pack_dir):
+    """无 API key 模式：返回 [(相对路径, 提示词)]，用户拿去 ChatGPT 手动出图。"""
+    p, pack = sticker.load_pack(str(pack_dir))
+    items = [(f"sheets/{i:02d}.png（上传角色图，要 1:1 透明底）", sticker._prompt_sheet(pack, s))
+             for i, s in enumerate(pack["stickers"], 1)]
+    items += [(f"assets_raw/{name}.png（{size}）", prompt)
+              for name, (size, _, prompt) in sticker.ASSET_PROMPTS.items()]
+    return items
+
+
+# ---------- 项目管理 ----------
+
+def _skeleton_pack(name, style, frame_ms=120, background="transparent"):
+    return {
+        "name": name,
+        "intro": "",
+        "copyright": "",
+        "reward_line": "",
+        "character": "character.png",
+        "style": style,
+        "frame_ms": frame_ms,
+        "background": background,
+        "stickers": [dict(s) for s in DEFAULT_STICKERS],
+    }
+
+
+def new_project(cfg, name):
+    p = Path(cfg["packs_dir"]) / name
+    p.mkdir(parents=True, exist_ok=True)
+    pack = _skeleton_pack(name, cfg.get("style", DEFAULT_CONFIG["style"]),
+                          cfg.get("frame_ms", 120), cfg.get("background", "transparent"))
+    (p / "pack.json").write_text(json.dumps(pack, ensure_ascii=False, indent=2), encoding="utf-8")
+    return p
+
+
+# ---------- 专辑（系列）模式 ----------
+
+ALBUM_FILE = "album.json"
+BAD_DIR_CHARS = '/\\:*?"<>|'
+
+
+def create_album(cfg, name, style="", desc=""):
+    """专辑 = packs/ 下的分组目录 + album.json 元数据；成员套就是里面的普通项目目录。
+
+    core 的生成/合成只认 pack_dir 绝对路径，专辑只是组织层，完全向后兼容：
+    散装项目仍在 packs/ 根目录，互不影响。
+    """
+    name = name.strip()
+    if not name or len(name) > 20:
+        raise ValueError("专辑名要 1–20 字")
+    if any(c in name for c in BAD_DIR_CHARS):
+        raise ValueError(f"专辑名不能含这些字符：{BAD_DIR_CHARS}")
+    a = Path(cfg["packs_dir"]) / name
+    a.mkdir(parents=True, exist_ok=True)
+    if (a / ALBUM_FILE).exists():
+        raise FileExistsError(f"专辑已存在：{name}")
+    meta = {"name": name, "style": style, "desc": desc,
+            "created": time.strftime("%Y-%m-%d")}
+    (a / ALBUM_FILE).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return a
+
+
+def new_pack_in_album(cfg, album_dir, pack_name, from_pack=None):
+    """在专辑里新建一套。pack.json 的 style 继承专辑 meta；
+    from_pack 指定时复制其 character.png，系列形象保持一致。返回 (路径, 是否复制了角色图)。"""
+    album_dir = Path(album_dir)
+    if not (album_dir / ALBUM_FILE).exists():
+        raise ValueError(f"不是专辑目录：{album_dir}")
+    meta = json.loads((album_dir / ALBUM_FILE).read_text(encoding="utf-8"))
+    pack_name = pack_name.strip()
+    if not pack_name:
+        raise ValueError("套名不能为空")
+    p = album_dir / pack_name
+    p.mkdir(parents=True, exist_ok=True)
+    if (p / "pack.json").exists():
+        raise FileExistsError(f"这套已存在：{pack_name}")
+    pack = _skeleton_pack(pack_name, meta.get("style") or cfg.get("style", DEFAULT_CONFIG["style"]),
+                          cfg.get("frame_ms", 120), cfg.get("background", "transparent"))
+    (p / "pack.json").write_text(json.dumps(pack, ensure_ascii=False, indent=2), encoding="utf-8")
+    copied = False
+    if from_pack:
+        src = Path(from_pack) / "character.png"
+        if src.exists():
+            shutil.copy2(src, p / "character.png")
+            copied = True
+    return p, copied
+
+
+def list_albums(cfg):
+    """扫 packs/ 一级子目录：带 album.json 的算专辑，返回 [{meta, path, packs:[{name,path}]}]。"""
+    root = Path(cfg["packs_dir"])
+    out = []
+    if not root.is_dir():
+        return out
+    for d in sorted(root.iterdir()):
+        mf = d / ALBUM_FILE
+        if d.is_dir() and mf.exists():
+            try:
+                meta = json.loads(mf.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {"name": d.name}
+            members = [{"name": s.name, "path": str(s)}
+                       for s in sorted(d.iterdir())
+                       if s.is_dir() and (s / "pack.json").exists()]
+            out.append({"meta": meta, "path": str(d), "packs": members})
+    return out
+
+
+def load_pack_json(pack_dir):
+    return json.loads((Path(pack_dir) / "pack.json").read_text(encoding="utf-8"))
+
+
+def save_pack_json(pack_dir, pack):
+    (Path(pack_dir) / "pack.json").write_text(
+        json.dumps(pack, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_cost(sticker, pack_dir):
+    try:
+        return sticker.total_cost(Path(pack_dir))
+    except Exception:
+        return 0.0
+
+
+def validate_pack(pack):
+    """保存前的即时校验（文本规则子集，最终以 check 命令为准）。"""
+    fails = []
+    name = pack.get("name", "")
+    intro = pack.get("intro", "")
+    cr = pack.get("copyright", "")
+    line = pack.get("reward_line", "")
+    if not 1 <= len(name) <= 8 or re.search(r"[\s，。！？、,.!?]", name):
+        fails.append(f"表情名称要 1–8 字、无标点无空格（现在 {len(name)} 字）：{name!r}")
+    if len(intro) > 80:
+        fails.append(f"表情介绍超过 80 字（现在 {len(intro)} 字）")
+    if len(cr) > 10:
+        fails.append(f"版权信息超过 10 字（现在 {len(cr)} 字）：{cr!r}")
+    if line and not 5 <= len(line) <= 15:
+        fails.append(f"赞赏引导语要 5–15 字（现在 {len(line)} 字）：{line!r}")
+    for field, text in (("名称", name), ("介绍", intro), ("引导语", line)):
+        for b in BANNED:
+            if b.lower() in text.lower():
+                fails.append(f"{field}里有「{b}」，容易被驳回")
+    stickers = pack.get("stickers", [])
+    if not 8 <= len(stickers) <= 24:
+        fails.append(f"一套要 8–24 张，现在 {len(stickers)} 张")
+    words = [s.get("word", "") for s in stickers]
+    for w in words:
+        if len(w) > 4 or re.search(r"[^\w]", w):
+            fails.append(f"含义词要 ≤4 字、不带符号：{w!r}")
+    for w in {x for x in words if words.count(x) > 1}:
+        fails.append(f"含义词重复：{w}")
+    for s in stickers:
+        for b in BANNED:
+            if b.lower() in (s.get("caption") or "").lower():
+                fails.append(f"配字里有「{b}」：{s.get('caption')}")
+    return fails
