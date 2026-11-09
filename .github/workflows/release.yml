@@ -74,7 +74,12 @@ jobs:
           mv "artifacts/sticker-workshop-mac-intel/表情包工坊-mac.zip" "rel/表情包工坊-${{ github.ref_name }}-mac-intel.zip"
 
       - name: 创建 Release 并挂产物
-        uses: softprops/action-gh-release@v2
-        with:
-          files: rel/*
-          generate_release_notes: true
+        # 用 gh CLI 而非 softprops/action-gh-release：后者上传层会剥掉资产名里的中文字符
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "表情包工坊 ${{ github.ref_name }}" \
+            --generate-notes \
+            rel/*
