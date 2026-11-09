@@ -25,6 +25,9 @@ ROOT = Path(__file__).parent
 VENDOR = ROOT / "vendor"
 SKILL = Path.home() / ".claude" / "skills" / "ray-sticker-shop" / "scripts" / "sticker.py"
 IS_MAC = sys.platform == "darwin"
+# Windows runner/部分终端 stdout 是 charmap 编码，print 中文/✓ 会 UnicodeEncodeError
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # --add-data 的分隔符：Windows 是 ';'，macOS/Linux 是 ':'
 SEP = ";" if os.name == "nt" else ":"
 
