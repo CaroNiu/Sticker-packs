@@ -1,0 +1,33 @@
+.gitignore
+  8e123a7cd26f9c2d 14
+README.md
+  8e123a7cd26f9c2d 1-100
+core.py
+  8e123a7cd26f9c2d 126-131
+.github/workflows/build-mac.yml
+  8e123a7cd26f9c2d 1-43
+build_exe.py
+  8e123a7cd26f9c2d 2,4-5,8-14,16,18,27-29,35-36,39,43,45,48-49,53-67
+test_zombie.py
+  8e123a7cd26f9c2d 47,107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "ee80614ee22c4c1e4059abc9d257e82ecb8b7013",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 2115,
+      "total_deletions": 1822,
+      "accepted_lines": 211,
+      "overriden_lines": 0
+    }
+  }
+}

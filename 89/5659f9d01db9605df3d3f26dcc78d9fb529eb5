@@ -1,0 +1,23 @@
+test_zombie.py
+  8e123a7cd26f9c2d 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "895659f9d01db9605df3d3f26dcc78d9fb529eb5",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "JMS\\caro.niu",
+      "messages": [],
+      "total_additions": 3854,
+      "total_deletions": 3851,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
