@@ -66,12 +66,12 @@ jobs:
         with:
           path: artifacts
 
-      - name: 按版本重命名
+      - name: 按版本重命名（资产名必须 ASCII：GitHub API 上传链路会剥掉中文字符）
         run: |
           mkdir rel
-          mv "artifacts/sticker-workshop-win/表情包工坊.exe" "rel/表情包工坊-${{ github.ref_name }}-win.exe"
-          mv "artifacts/sticker-workshop-mac-arm64/表情包工坊-mac.zip" "rel/表情包工坊-${{ github.ref_name }}-mac-arm64.zip"
-          mv "artifacts/sticker-workshop-mac-intel/表情包工坊-mac.zip" "rel/表情包工坊-${{ github.ref_name }}-mac-intel.zip"
+          mv "artifacts/sticker-workshop-win/表情包工坊.exe" "rel/StickerWorkshop-${{ github.ref_name }}-win.exe"
+          mv "artifacts/sticker-workshop-mac-arm64/表情包工坊-mac.zip" "rel/StickerWorkshop-${{ github.ref_name }}-mac-arm64.zip"
+          mv "artifacts/sticker-workshop-mac-intel/表情包工坊-mac.zip" "rel/StickerWorkshop-${{ github.ref_name }}-mac-intel.zip"
 
       - name: 创建 Release 并挂产物
         # 用 gh CLI 而非 softprops/action-gh-release：后者上传层会剥掉资产名里的中文字符
