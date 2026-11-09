@@ -1,0 +1,23 @@
+.github/workflows/release.yml
+  8e123a7cd26f9c2d 69,72-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "5fbfbbb1a36d9ae49076016db31d5241b2a15f04",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 3109,
+      "overriden_lines": 0
+    }
+  }
+}
