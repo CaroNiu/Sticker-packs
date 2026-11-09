@@ -78,20 +78,40 @@ main.py        # PySide6 界面
 - 冒烟测试覆盖：skill 加载 / 项目创建 / 文案校验 / dry-run 拦截 / build 合成 / check 检查 /
   方舟路由分发 / GUI 实例化。
 
-## 打包成独立 exe（在其他 PC 直接用）
+## 打包分发（Windows / macOS）
 
-在有 skill 的开发机上：
+### 方式一：GitHub Actions 云端打包 + 自动挂 Release（推荐）
+
+推一个 `v*` 标签即可，三平台（Windows exe / Mac arm64 / Mac Intel）自动构建并挂到 Release：
 
 ```bash
-pip install pyinstaller
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+几分钟后在仓库 **Releases** 页面下载：
+
+- `表情包工坊-v1.0.0-win.exe` —— 双击即用
+- `表情包工坊-v1.0.0-mac-arm64.zip` —— Apple Silicon（M 系列）
+- `表情包工坊-v1.0.0-mac-intel.zip` —— Intel 芯片
+
+Mac 安装：解压 → `表情包工坊.app` 拖进「应用程序」→ **右键 → 打开**（未签名，首次需右键绕过 Gatekeeper）。
+
+普通 push 到 main / Actions 页面手动触发只出构建产物（Actions 的 Artifacts 区，90 天有效期），不建 Release。
+
+### 方式二：本机打包
+
+PyInstaller 不支持交叉编译，本机是什么平台就打什么包：
+
+```bash
+pip install PySide6 Pillow pyinstaller
 python build_exe.py
 ```
 
-产物 `dist/表情包工坊.exe`（单文件），拷到任意 Windows x64 机器双击即可：
-
-- 首次运行在 exe 旁边生成 `config.json`（设置里填 API Key/地址/模型）和 `packs/`（作品目录）
-- skill 的 `sticker.py` 已内置进 exe，目标机器无需安装 ray-sticker-shop；skill 更新后重跑
-  `python build_exe.py` 同步内置副本
+- Windows 产物 `dist/表情包工坊.exe`（单文件）；macOS 产物 `dist/表情包工坊-mac.zip`（内含 .app）
+- 首次运行生成 `config.json`（填 API Key/地址/模型）和 `packs/`（作品目录）；Mac 的数据在
+  `~/Library/Application Support/StickerWorkshop/`
+- skill 的 `sticker.py` 已内置进包，目标机器无需安装 ray-sticker-shop；skill 更新后重跑同步
 - 从源码运行则照旧用「启动表情包工坊.bat」
 
 ## 合规提醒

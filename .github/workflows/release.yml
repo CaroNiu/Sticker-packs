@@ -1,0 +1,80 @@
+name: Build & Release
+
+# 推 tag（v*）→ 三平台打包 + 自动创建 Release 挂产物；
+# push main / 手动触发 → 只出构建产物（健康检查，不建 Release）。
+# 发版流程：git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # release job 创建 Release 需要写权限
+
+defaults:
+  run:
+    shell: bash     # 三平台统一用 bash（Windows runner 自带 git bash）
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest        # Apple Silicon（M 系列）
+            suffix: mac-arm64
+            file: dist/表情包工坊-mac.zip
+          - os: macos-15-intel      # Intel 芯片
+            suffix: mac-intel
+            file: dist/表情包工坊-mac.zip
+          - os: windows-latest      # Windows 单文件 exe
+            suffix: win
+            file: dist/表情包工坊.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: pip install PySide6 Pillow pyinstaller
+
+      - name: 拉取内置 skill（打进包里，目标机器无需安装）
+        run: git clone --depth 1 https://github.com/imraywang/ray-sticker-shop "$HOME/.claude/skills/ray-sticker-shop"
+
+      - name: 打包（build_exe.py 自动识别平台）
+        run: python build_exe.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticker-workshop-${{ matrix.suffix }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: 汇总三平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 按版本重命名
+        run: |
+          mkdir rel
+          mv "artifacts/sticker-workshop-win/表情包工坊.exe" "rel/表情包工坊-${{ github.ref_name }}-win.exe"
+          mv "artifacts/sticker-workshop-mac-arm64/表情包工坊-mac.zip" "rel/表情包工坊-${{ github.ref_name }}-mac-arm64.zip"
+          mv "artifacts/sticker-workshop-mac-intel/表情包工坊-mac.zip" "rel/表情包工坊-${{ github.ref_name }}-mac-intel.zip"
+
+      - name: 创建 Release 并挂产物
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rel/*
+          generate_release_notes: true
