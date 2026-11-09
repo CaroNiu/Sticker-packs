@@ -6,9 +6,14 @@
 根因：QThread C++ 对象被 deleteLater 回收后，self.worker.isRunning() 抛 RuntimeError，
 _run 的忙碌守卫先炸 → 新任务根本没启动；_tick 每秒再炸一次。
 """
+import io
+import json
 import os
+import shutil
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.stdout.reconfigure(encoding="utf-8")
@@ -26,7 +31,19 @@ from main import MainWindow, Worker  # noqa: E402
 
 app = QApplication([])
 w = MainWindow()
-assert w.pack_dir, "未恢复到任何项目，无法测 dry_run"
+
+# 自带临时项目（2 个待生成 sticker）：不依赖用户真实数据——真实项目可能已全部生成完，todo=0
+from PIL import Image as PImage  # noqa: E402
+tmp = Path(tempfile.mkdtemp(prefix="zombie_"))
+(tmp / "pack.json").write_text(json.dumps(
+    {"name": "僵尸测试", "character": "character.png",
+     "stickers": [{"word": "摸鱼", "action": "slacking off at desk"},
+                  {"word": "开摆", "action": "lying flat on floor"}]},
+    ensure_ascii=False), encoding="utf-8")
+buf = io.BytesIO()
+PImage.new("RGB", (8, 8), (9, 9, 9)).save(buf, format="PNG")
+(tmp / "character.png").write_bytes(buf.getvalue())
+w.pack_dir = tmp
 
 errors = []
 
@@ -87,4 +104,5 @@ run_task(second)
 ok = pump_until_worker_gone()
 assert ok and second and second[0] >= 1, f"僵尸之后新任务没跑起来：{errors or second}"
 print(f"PASS 4 僵尸之后新任务正常启动并完成（dry_run={second[0]} 张）")
+shutil.rmtree(tmp, ignore_errors=True)
 print("ZOMBIE FIX PASS")

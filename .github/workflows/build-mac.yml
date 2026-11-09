@@ -1,0 +1,43 @@
+name: Build Mac app
+
+# Mac 包必须在 macOS 环境打（PyInstaller 不支持交叉编译），
+# 用 GitHub Actions 云端产出 .app zip：Actions 页面手动触发，或推送到 main 自动触发。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest        # Apple Silicon (M 系列)
+            suffix: mac-arm64
+          - os: macos-15-intel      # Intel 芯片
+            suffix: mac-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: pip install PySide6 Pillow pyinstaller
+
+      - name: 拉取内置 skill（打进包里，目标机器无需安装）
+        run: git clone --depth 1 https://github.com/imraywang/ray-sticker-shop "$HOME/.claude/skills/ray-sticker-shop"
+
+      - name: 打包（build_exe.py 自动识别 mac → .app + zip）
+        run: python build_exe.py
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticker-workshop-${{ matrix.suffix }}
+          path: dist/表情包工坊-mac.zip
+          if-no-files-found: error

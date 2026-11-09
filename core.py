@@ -28,7 +28,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # 打包成 exe 后，__file__ 指向临时解压目录（一次性），配置/作品必须放 exe 旁边才持久
 FROZEN = getattr(sys, "frozen", False)
 if FROZEN:
-    PROJECT_ROOT = Path(sys.executable).resolve().parent
+    exe_dir = Path(sys.executable).resolve().parent
+    if sys.platform == "darwin" and ".app" in exe_dir.parts:
+        # Mac .app：bundle 内部不可写（Gatekeeper/只读介质），数据放用户目录（macOS 惯例）
+        PROJECT_ROOT = Path.home() / "Library" / "Application Support" / "StickerWorkshop"
+        PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
+    else:
+        PROJECT_ROOT = exe_dir
 CONFIG_PATH = PROJECT_ROOT / "config.json"
 DEFAULT_SKILL_DIR = Path.home() / ".claude" / "skills" / "ray-sticker-shop" / "scripts"
 # 打包内置的 skill 副本（build_exe.py 复制进 vendor/，随 exe 分发）
@@ -119,6 +125,10 @@ def load_config():
             pass
     else:
         save_config(cfg)  # 首次运行落盘模板（exe 场景：用户直接编辑 exe 旁的 config.json 填 key）
+    # 相对 packs_dir 锚定到数据目录：Mac 双击 .app 时 cwd 是 "/"，相对路径会写到根目录炸权限
+    pd = Path(cfg.get("packs_dir") or "packs")
+    if not pd.is_absolute():
+        cfg["packs_dir"] = str(PROJECT_ROOT / pd)
     return cfg
 
 

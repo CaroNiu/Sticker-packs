@@ -11,3 +11,4 @@ build/
 vendor/
 # 本地打包脚本生成的副本
 *.log
+.idea/
