@@ -415,11 +415,11 @@ def _chat(base, key, model, system, user, max_tokens=3000, timeout=180):
     raise RuntimeError(str(last))
 
 
-def _balanced_json(t, start):
-    """从 t[start]（应为 '{'）开始找配对 '}'（正确处理字符串/转义），返回子串或 None。
+def _balanced_json(t, start, open_ch="{", close_ch="}"):
+    """从 t[start]（应为 open_ch）开始找配对 close_ch（正确处理字符串/转义），返回子串或 None。
 
-    贪婪正则 r"\\{.*\\}" 在 JSON 前后还有文本、或文本里有别的花括号时会匹配过宽，
-    平衡扫描精确取第一个完整对象。
+    贪婪正则（r"\\{.*\\}" 之类）在 JSON 前后还有文本、或文本里有同类括号时会匹配过宽，
+    平衡扫描精确取第一个完整块。
     """
     depth = 0
     in_str = False
@@ -435,9 +435,9 @@ def _balanced_json(t, start):
                 in_str = False
         elif c == '"':
             in_str = True
-        elif c == "{":
+        elif c == open_ch:
             depth += 1
-        elif c == "}":
+        elif c == close_ch:
             depth -= 1
             if depth == 0:
                 return t[start:i + 1]
@@ -558,16 +558,60 @@ IDEAS_SYSTEM = (
 )
 
 
+def _repair_truncated_array(t, start):
+    """截断的 JSON 数组补救（max_tokens 把输出拦腰切断）：丢最后一个不完整项，补 ']'。
+
+    创意清单是只读建议，丢半条的建议完全可接受——好过整个报错。
+    """
+    depth = 0
+    in_str = False
+    esc = False
+    last_item_end = -1
+    for i in range(start, len(t)):
+        c = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c in "[{":
+            depth += 1
+        elif c in "]}":
+            depth -= 1
+            if depth == 0:  # 数组本来就完整（不该到这，上层已试过）
+                return t[start:i + 1]
+            if depth == 1 and c == "}":  # 顶层项（数组内的对象）完整结束
+                last_item_end = i
+    if last_item_end > start:
+        return t[start:last_item_end + 1] + "]"
+    return None
+
+
 def _extract_json_array(text):
-    t = text.strip()
-    if t.startswith("```"):  # 剥掉 markdown 代码栅栏
-        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t)
-    m = re.search(r"\[.*\]", t, re.S)
-    if m:
-        t = m.group(0)
-    arr = json.loads(t)
-    return arr if isinstance(arr, list) else []
+    """从模型输出抠 JSON 数组：剥 <think>/围栏 → 平衡扫描 → 截断修复。"""
+    t = _strip_think(text)
+    t = re.sub(r"^```(?:json)?\s*", "", t)
+    t = re.sub(r"\s*```$", "", t)
+    t = t.strip()
+    starts = [m.start() for m in re.finditer(r"\[", t)]
+    if not starts:
+        arr = json.loads(t)  # 也许整体就是数组字面量变体？让它按原样报错
+        return arr if isinstance(arr, list) else []
+    for s in starts:
+        cand = _balanced_json(t, s, "[", "]")
+        if cand is not None:
+            arr = json.loads(cand)
+            return arr if isinstance(arr, list) else []
+    for s in starts:  # 没有完整数组 → 截断修复
+        fixed = _repair_truncated_array(t, s)
+        if fixed is not None:
+            arr = json.loads(fixed)
+            return arr if isinstance(arr, list) else []
+    raise json.JSONDecodeError("unterminated array", t, len(t))
 
 
 def ai_ideas(cfg, topic=""):
@@ -578,8 +622,19 @@ def ai_ideas(cfg, topic=""):
     if not (base and key and model):
         raise ValueError("文案模型没配全：需要模型名、API Key、地址（设置里第二组）")
     user = f"主题方向（可空）：{topic or '不限，给出当下最容易被转发使用的抽象表情创意'}"
-    text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=3000, timeout=120)
-    arr = _extract_json_array(text)
+    text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=6000, timeout=120)
+    try:
+        arr = _extract_json_array(text)
+    except Exception:
+        # 自动纠偏重试：思考文本/截断/格式跑偏时，带反馈强制再来一次
+        user2 = user + ("\n\n⚠ 你上一次的输出解析失败（可能输出了思考过程，或 JSON 被截断）。"
+                        "这次必须直接输出一个 JSON 数组，从 [ 开始到 ] 结束，"
+                        "不要思考过程、不要解释、不要任何多余文字，12 条尽量精炼。")
+        text2 = _chat(base, key, model, IDEAS_SYSTEM, user2, max_tokens=6000, timeout=120)
+        try:
+            arr = _extract_json_array(text2)
+        except Exception:
+            raise ValueError(f"创意输出解析失败（已自动纠偏重试 1 次），换模型或重试。输出开头：{text2[:120]}")
     seen, ideas = set(), []
     for it in arr:
         if not isinstance(it, dict):
