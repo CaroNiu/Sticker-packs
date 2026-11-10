@@ -1,0 +1,27 @@
+LICENSE
+  8e123a7cd26f9c2d 1-21
+_render_docs.py
+  8e123a7cd26f9c2d 1-69
+README.md
+  8e123a7cd26f9c2d 1-18,21,23-30,32,34-36,38-40,42-43,45,47-49,51,53,55-62,64,66-71,73,75-77,79,81-82,90-91,93,95,97-102,104,106-109,111-114,116-118,120,122-123,127,130,132,134-141,145-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "2fcace1261075dca22ade6f006108130c97a1e76",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 200,
+      "total_deletions": 92,
+      "accepted_lines": 668,
+      "overriden_lines": 34
+    }
+  }
+}
