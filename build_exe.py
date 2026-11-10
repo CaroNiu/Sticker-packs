@@ -32,6 +32,42 @@ if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
 SEP = ";" if os.name == "nt" else ":"
 
 
+def _make_icon():
+    """用 theme 的矢量绘制渲染应用图标：Windows 出 .ico，macOS 出 .icns。
+
+    仓库不放二进制素材；离屏渲染（CI 无显示器也能跑）+ Pillow 转格式，
+    产物是中间文件（已 gitignore）。
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QGuiApplication
+    from PIL import Image
+
+    QGuiApplication([])  # QPixmap 需要一个 GUI 应用实例
+    import theme
+    png = ROOT / "app_icon.png"
+    theme._draw_icon(256).save(str(png))
+    im = Image.open(png)
+    try:
+        if IS_MAC:
+            iconset = ROOT / "app_icon.iconset"
+            iconset.mkdir(exist_ok=True)
+            for s in (16, 32, 64, 128, 256):
+                im.resize((s, s), Image.LANCZOS).save(iconset / f"icon_{s}x{s}.png")
+                big = min(s * 2, 512)
+                im.resize((big, big), Image.LANCZOS).save(iconset / f"icon_{s}x{s}@2x.png")
+            icns = ROOT / "app_icon.icns"
+            subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(icns)],
+                           check=True)
+            return icns
+        ico = ROOT / "app_icon.ico"
+        im.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+                            (128, 128), (256, 256)])
+        return ico
+    finally:
+        im.close()
+        png.unlink(missing_ok=True)
+
+
 def main():
     if not SKILL.exists():
         sys.exit(f"找不到 skill：{SKILL}\n"
@@ -41,10 +77,14 @@ def main():
     shutil.copy2(SKILL, VENDOR / "sticker.py")
     print("✓ 已复制 skill 副本 → vendor/sticker.py（随应用内置分发）")
 
+    icon = _make_icon()
+    print(f"✓ 已生成应用图标 → {icon.name}")
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean", "--windowed",
         "--name", "表情包工坊",
+        "--icon", str(icon),
         "--add-data", f"{VENDOR / 'sticker.py'}{SEP}vendor",
     ]
     if not IS_MAC:

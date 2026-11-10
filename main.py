@@ -1794,6 +1794,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     apply_theme(app)
+    app.setWindowIcon(theme.app_icon())  # 标题栏/任务栏图标，对话框自动继承
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

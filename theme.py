@@ -10,8 +10,11 @@ QSS 的 url() 不支持 data-URL，相对路径又随 cwd 漂移——所以下�
 """
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QColor, QImage, QPainter, QPolygonF
+from PySide6.QtCore import QRectF, Qt, QPointF
+from PySide6.QtGui import (
+    QBrush, QColor, QIcon, QImage, QLinearGradient, QPainter, QPen,
+    QPixmap, QPolygonF,
+)
 from PySide6.QtWidgets import QApplication
 
 import core
@@ -242,3 +245,68 @@ QToolTip {{
 
 def apply_theme(app: QApplication):
     app.setStyleSheet(build_qss())
+
+
+# ---------- 应用图标（窗口左上角 / 任务栏 / 打包 exe）----------
+#
+# 纯 QPainter 矢量绘制：珊瑚橙渐变圆角底 + 白色对话气泡 + 笑脸 + 四角星。
+# 仓库不放二进制素材，三平台渲染一致；打包时由 build_exe.py 渲染成 ico/icns。
+
+_icon_cache = None
+
+
+def _draw_icon(size=256):
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    s = size / 256.0
+
+    # 底：珊瑚橙对角渐变圆角方块
+    grad = QLinearGradient(0, 0, size, size)
+    grad.setColorAt(0.0, QColor("#FF8A5C"))
+    grad.setColorAt(1.0, QColor("#E85530"))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(grad))
+    p.drawRoundedRect(QRectF(0, 0, size, size), 58 * s, 58 * s)
+
+    # 白色对话气泡 + 左下尾巴
+    p.setBrush(QColor("#FFFFFF"))
+    p.drawRoundedRect(QRectF(44 * s, 58 * s, 168 * s, 122 * s), 38 * s, 38 * s)
+    p.drawPolygon(QPolygonF([
+        QPointF(82 * s, 172 * s), QPointF(130 * s, 172 * s), QPointF(94 * s, 212 * s)]))
+
+    # 笑脸：圆角竖条眼睛 + 微笑弧线 + 腮红
+    p.setBrush(QColor("#3A362F"))
+    p.drawRoundedRect(QRectF(88 * s, 92 * s, 15 * s, 30 * s), 7.5 * s, 7.5 * s)
+    p.drawRoundedRect(QRectF(153 * s, 92 * s, 15 * s, 30 * s), 7.5 * s, 7.5 * s)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(QColor("#3A362F"), 10 * s, Qt.SolidLine, Qt.RoundCap))
+    p.drawArc(QRectF(96 * s, 108 * s, 64 * s, 56 * s), 200 * 16, 140 * 16)
+    p.setPen(Qt.NoPen)
+    blush = QColor(255, 122, 90, 80)
+    p.setBrush(blush)
+    p.drawEllipse(QRectF(64 * s, 126 * s, 24 * s, 14 * s))
+    p.drawEllipse(QRectF(168 * s, 126 * s, 24 * s, 14 * s))
+
+    # 右上角黄色四角星（点缀）
+    p.setBrush(QColor("#FFD66B"))
+    cx, cy, r, k = 214 * s, 46 * s, 18 * s, 0.28 * 18 * s
+    p.drawPolygon(QPolygonF([
+        QPointF(cx, cy - r), QPointF(cx + k, cy - k), QPointF(cx + r, cy),
+        QPointF(cx + k, cy + k), QPointF(cx, cy + r), QPointF(cx - k, cy + k),
+        QPointF(cx - r, cy), QPointF(cx - k, cy - k)]))
+    p.end()
+    return pm
+
+
+def app_icon():
+    """QIcon，覆盖 16–256 各标准尺寸（小尺寸从 256 主渲染平滑缩放）。"""
+    global _icon_cache
+    if _icon_cache is None:
+        master = _draw_icon(256)
+        icon = QIcon()
+        for sz in (256, 128, 64, 48, 32, 24, 16):
+            icon.addPixmap(master.scaled(sz, sz, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        _icon_cache = icon
+    return _icon_cache

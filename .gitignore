@@ -14,3 +14,8 @@ vendor/
 .idea/
 # 运行时生成的主题箭头小图
 .theme/
+# 打包时从 theme.py 矢量绘制生成的应用图标（中间产物）
+app_icon.png
+app_icon.ico
+app_icon.icns
+app_icon.iconset/
