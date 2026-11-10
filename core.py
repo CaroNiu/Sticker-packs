@@ -549,12 +549,23 @@ def test_text_connection(cfg):
 # ---------- 抽象创意参谋 ----------
 
 IDEAS_SYSTEM = (
-    "你是微信表情包策划师，精通抽象梗与传播规律，给用户出利于传播的原创抽象表情创意。"
-    "每条创意是 JSON 对象 {word, scene, why}：word 为表情文案词 1-4 字（无标点、不重复、上口）；"
-    "scene 为使用场景一句话；why 为传播理由一句话（情绪共鸣/泛用性/玩梗空间）。"
-    "共 12 条，覆盖：高频回复、情绪发泄、抽象玩梗、职场摸鱼、关系互动。"
+    "你是「抽象表情包」策划师。衡量标准只有一条：收到的人愣一下，然后笑出来、转发出去。"
+    "「安全和常见」等于失败——第一批蹦进脑海的词（摸鱼/开摆/躺平/内卷/佛系/社恐/在吗/"
+    "已读不回/呵呵/装忙/划水/加班/emo/摆烂以及任何同质词）全部禁用。\n"
+    "必须用错位手法造词，每条至少用一种，12 条覆盖至少 5 种手法：\n"
+    "1. 自造伪术语：把日常状态包装成医学/学术/科技名词（电子青菜＝被互联网吸干水分的人）\n"
+    "2. 物种/物品错位：让动物或物品顶替人的处境（精神水豚＝情绪稳定到麻木的打工人）\n"
+    "3. 状态合成词：两个不搭的字硬拼出新概念（班味很重＝身上带着职场的疲惫气场）\n"
+    "4. 身体化情绪：把心理状态写成身体症状（脑内缓冲＝大脑卡住转不动）\n"
+    "5. 反向关心/反向祝福：表面客气实则扎心（含班量超标＝暴露上班痕迹过多）\n"
+    "6. 具体到荒诞：用精确的细节替代泛泛描述（键盘出汗＝紧张到手心冒汗）\n"
+    "每条格式 JSON 对象 {word, scene, why}："
+    "word 为表情文案词 1-4 字（无标点、不重复、优先名词化/可被当成「身份」称呼的词）；"
+    "scene 写这个词会被使用的「具体瞬间」（有画面细节，禁止「上班时」这类概括）；"
+    "why 一句话说明出人意料的点或传播钩子。\n"
+    "12 条手法分布均匀，主题方向由用户输入决定，无输入时聚焦当代日常（上班/社交/手机/睡觉）。\n"
     "红线：不出明星、影视动漫游戏角色、二创同人；不碰政治敏感与违禁词；全部原创。"
-    "输出纯 JSON 数组，不要 markdown 代码块，不要解释文字。"
+    "输出纯 JSON 数组，不要 markdown 代码块，不要思考过程和解释文字。"
 )
 
 
@@ -673,6 +684,35 @@ def dry_run(sticker, cfg, pack_dir, with_assets=True):
                          cfg.get("quality", "medium"), with_assets, None)
     todo = [j for j in jobs if not j[0].exists()]
     return {"count": len(todo), "usd": round(len(todo) * 0.052, 2), "total": len(jobs)}
+
+
+def tweak_sheet(sticker, cfg, pack_dir, item, instruction):
+    """微调一张已生成的图：参考图换成该图本身，原 prompt + 微调指令，覆盖原图。
+
+    item 形如 "07.png" 或 "07"（精灵图）/"cover.png"（素材）。方舟 seedream 与
+    OpenAI edits 接口都以参考图为底改图——画风构图保持，只按指令调整，
+    比“重抽”（全随机）可控得多。计费同一次普通生成，log_path 照常记账。
+    """
+    with env_patch(cfg):
+        p, pack = sticker.load_pack(str(pack_dir))
+        jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
+                             cfg.get("quality", "medium"), True, None)
+        stem = item[:-4] if item.lower().endswith(".png") else item
+        job = next((j for j in jobs if j[0].name == f"{stem}.png"), None)
+        if job is None:
+            raise ValueError(f"{item} 不是可微调的生成项")
+        out, _ref, prompt, size, bg, model, quality, log = job
+        if not out.exists():
+            raise ValueError(f"{out.name} 还没生成过，先「开始生成」再微调")
+        inst = instruction.strip()
+        if not inst:
+            raise ValueError("微调指令不能为空")
+        new_prompt = (f"{prompt}\n\n在保持角色形象、画风、构图与参考图一致的前提下做如下微调："
+                      f"{inst}。未提及的方面一律保持参考图原样。")
+        api_log(f"✎ 微调 {out.name}：{inst}")
+        raw = sticker._edit(out, new_prompt, size, bg, model, quality, log)  # 参考图 = 它自己
+        out.write_bytes(raw)
+        return {"item": out.name, "path": str(out), "bytes": len(raw)}
 
 
 def gen_pack(sticker, cfg, pack_dir, with_assets=True, redo=None, progress=None):

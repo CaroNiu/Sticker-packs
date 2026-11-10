@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
+    QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QProgressBar, QScrollArea, QSpinBox, QStackedWidget, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -551,6 +551,64 @@ class AlbumDialog(QDialog):
         a = self._current_album()
         if a:
             QDesktopServices.openUrl(QUrl.fromLocalFile(a["path"]))
+
+
+class TweakDialog(QDialog):
+    """单张微调：以该图本身为参考图 + 微调指令改图（画风构图保持，只调指定方面）。"""
+
+    QUICK = ["表情更夸张", "动作幅度更大", "背景更简洁", "色调更暖",
+             "更Q更圆润", "细节更清晰", "增加一点幽默感"]
+
+    def __init__(self, main, item):
+        super().__init__(main)
+        self.main = main
+        self.item = item
+        self.setWindowTitle(f"✎ 微调 {item}（画风构图保持，只按指令调整）")
+        self.setMinimumWidth(560)
+        v = QVBoxLayout(self)
+        img = QLabel()
+        img.setAlignment(Qt.AlignCenter)
+        img.setMinimumSize(360, 360)
+        path = main._thumb_path(item)
+        if path and Path(path).exists():
+            pm = QPixmap(str(path))
+            if not pm.isNull():
+                img.setPixmap(pm.scaled(360, 360, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if img.pixmap() is None or img.pixmap().isNull():
+            img.setText("（预览不可用）")
+        v.addWidget(img)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("微调指令："))
+        self.ed_inst = QLineEdit()
+        self.ed_inst.setPlaceholderText("例如：嘴巴张更大，眼睛眯成月牙，其余保持原样")
+        row.addWidget(self.ed_inst, 1)
+        v.addLayout(row)
+        quick = QHBoxLayout()
+        quick.addWidget(QLabel("快捷："))
+        for q in self.QUICK:
+            b = QPushButton(q)
+            b.clicked.connect(lambda _=False, t=q: self._append(t))
+            quick.addWidget(b)
+        quick.addStretch(1)
+        v.addLayout(quick)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("开始微调（约 $0.05）")
+        bb.accepted.connect(self._go)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def _append(self, t):
+        cur = self.ed_inst.text().strip()
+        if t in cur:
+            return
+        self.ed_inst.setText((cur + "，" if cur else "") + t)
+
+    def _go(self):
+        if self.ed_inst.text().strip():
+            self.accept()
+
+    def instruction(self):
+        return self.ed_inst.text().strip()
 
 
 class IdeasDialog(QDialog):
@@ -1232,6 +1290,8 @@ class MainWindow(QMainWindow):
         self.thumb_list.setSpacing(6)
         self.thumb_list.setUniformItemSizes(True)
         self.thumb_list.itemDoubleClicked.connect(self._open_thumb)
+        self.thumb_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.thumb_list.customContextMenuRequested.connect(self._thumb_menu)
         v.addWidget(self.thumb_list)
         self.gen_log = QPlainTextEdit()
         self.gen_log.setReadOnly(True)
@@ -1343,6 +1403,34 @@ class MainWindow(QMainWindow):
         p = self._thumb_path(item.text())
         if p:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+
+    def _thumb_menu(self, pos):
+        it = self.thumb_list.itemAt(pos)
+        if it is None:
+            return
+        menu = QMenu(self)
+        act_tweak = menu.addAction("✎ 微调这张…")
+        act_open = menu.addAction("🔍 看大图")
+        chosen = menu.exec(self.thumb_list.mapToGlobal(pos))
+        if chosen is act_open:
+            self._open_thumb(it)
+        elif chosen is act_tweak:
+            self._tweak_sheet(it.text())
+
+    def _tweak_sheet(self, item):
+        dlg = TweakDialog(self, item)
+        if dlg.exec() != QDialog.Accepted or not dlg.instruction():
+            return
+        inst = dlg.instruction()
+
+        def done(r):
+            self._add_thumb(r["item"])  # 原位更新缩略图
+            self.gen_log.appendPlainText(f"✅ {r['item']} 微调完成（{r['bytes'] // 1024}KB）")
+            self.statusBar().showMessage(f"✅ {r['item']} 微调完成", 8000)
+
+        self._run(f"微调 {item} 中…", core.tweak_sheet, self.sticker, self.cfg,
+                  self.pack_dir, item, inst, step=2, on_done=done,
+                  on_fail=lambda m: QMessageBox.critical(self, "微调失败", m))
 
     def _on_gen_progress(self, item, kind, msg):
         if kind == "total":
