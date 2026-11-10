@@ -47,6 +47,20 @@ pip install -r requirements.txt
 「设置→参数设置」留空 Key，第 ③ 步点「查看出图提示词」复制到 ChatGPT 手动出图，
 把图按提示存进 `sheets/01.png` 等位置，回第 ④ 步点合成即可。
 
+## 模型兼容（不锁定厂商）
+
+通用流水线设计：任意 OpenAI 兼容大模型都能接。设置分「图片生成模型」「文案对话模型」
+两组，各自独立填 API Key / 接口地址 / 模型名（可下拉选也可手填任意模型 ID）：
+
+| 用途 | 链路 | 适用服务 |
+|---|---|---|
+| 文案对话模型 | OpenAI 兼容 `POST {地址}/chat/completions` | OpenAI / DeepSeek / GLM / Qwen / Kimi / 火山方舟 / 中转聚合网关 / 本地 Ollama·vLLM |
+| 图片生成模型 | OpenAI 兼容 multipart `/images/edits` | OpenAI 官方及支持该协议的任意网关 |
+| 图片生成模型 | 方舟 JSON `images/generations`（识别到 volces.com 自动切换） | 火山方舟标准入口与 Coding 套餐入口 |
+
+默认值面向 OpenAI 官方（`gpt-image-1` / `gpt-4o-mini`，接口地址留空即可）；
+换其他服务只需改这三项配置——流水线本身（提示词、GIF 合成、微信规范检查）不感知厂商。
+
 ## 目录说明
 
 ```

@@ -225,7 +225,7 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
 
         # ---- 组 1：图片生成模型 ----
-        g1 = QGroupBox("图片生成模型（出角色图 / 精灵图 / 素材）")
+        g1 = QGroupBox("图片生成模型（出角色图 / 精灵图 / 素材 · 任意 OpenAI 兼容服务）")
         form = QFormLayout(g1)
 
         self.ed_key = QLineEdit(cfg.get("api_key", ""))
@@ -235,28 +235,26 @@ class SettingsDialog(QDialog):
 
         self.ed_base = QLineEdit(cfg.get("base_url", ""))
         self.ed_base.setPlaceholderText(
-            "火山方舟标准入口 …/api/v3 或套餐入口 …/api/plan；OpenAI 官方留空")
+            "任意 OpenAI 兼容图片接口（OpenAI 官方留空；火山方舟 …/api/v3 或套餐 …/api/plan）")
         form.addRow("图片接口地址", self.ed_base)
 
-        # 自定义模型：不同 key（官方/中转/方舟）可用模型差异大，允许手填任意模型 ID
+        # 任意 OpenAI 兼容服务都能用：官方 / 火山方舟 / 中转聚合网关 / 本地推理，模型 ID 手填即可
         self.cb_char_model = QComboBox()
         self.cb_char_model.setEditable(True)
         self.cb_char_model.addItems([
-            cfg.get("character_model", "gpt-image-2.6-sunburst"),
-            "gpt-image-2.6-sunburst", "doubao-seedream-5.0-pro", "doubao-seedream-4-0-250828",
-            "doubao-seededit-3-0-i2i",
+            cfg.get("character_model") or "gpt-image-1",
+            "gpt-image-1", "doubao-seedream-4-0-250828", "doubao-seededit-3-0-i2i",
         ])
-        self.cb_char_model.setCurrentText(cfg.get("character_model", "gpt-image-2.6-sunburst"))
+        self.cb_char_model.setCurrentText(cfg.get("character_model") or "gpt-image-1")
         form.addRow("角色图模型", self.cb_char_model)
 
         self.cb_gen_model = QComboBox()
         self.cb_gen_model.setEditable(True)
         self.cb_gen_model.addItems([
-            cfg.get("gen_model", "gpt-image-2.6-flare"),
-            "gpt-image-2.6-flare", "doubao-seedream-5.0-pro", "doubao-seedream-4-0-250828",
-            "doubao-seededit-3-0-i2i",
+            cfg.get("gen_model") or "gpt-image-1",
+            "gpt-image-1", "doubao-seedream-4-0-250828", "doubao-seededit-3-0-i2i",
         ])
-        self.cb_gen_model.setCurrentText(cfg.get("gen_model", "gpt-image-2.6-flare"))
+        self.cb_gen_model.setCurrentText(cfg.get("gen_model") or "gpt-image-1")
         form.addRow("生成模型", self.cb_gen_model)
 
         row_test = QHBoxLayout()
@@ -269,7 +267,7 @@ class SettingsDialog(QDialog):
         root.addWidget(g1)
 
         # ---- 组 2：文案对话模型 ----
-        g2 = QGroupBox("文案对话模型（第②步 AI 写文案用，可用不同账号的 key）")
+        g2 = QGroupBox("文案对话模型（第②步 AI 写文案 · 任意 OpenAI 兼容大模型，可配独立 key）")
         form2 = QFormLayout(g2)
 
         self.ed_text_key = QLineEdit(cfg.get("text_api_key", ""))
@@ -279,15 +277,14 @@ class SettingsDialog(QDialog):
 
         self.ed_text_base = QLineEdit(cfg.get("text_base_url", ""))
         self.ed_text_base.setPlaceholderText(
-            "留空 = 沿用图片接口地址；如方舟套餐填 https://ark.cn-beijing.volces.com/api/plan")
+            "留空 = 沿用图片接口地址（都没有则用 OpenAI 官方）；任意 OpenAI 兼容地址均可")
         form2.addRow("文案接口地址", self.ed_text_base)
 
         self.cb_text_model = QComboBox()
         self.cb_text_model.setEditable(True)
         self.cb_text_model.addItems([
-            cfg.get("text_model", ""),
-            "glm-5.3-flash", "kimi-k2.1-pro", "doubao-seed-2.1-pro",
-            "deepseek-chat", "gpt-4o-mini",
+            cfg.get("text_model") or "gpt-4o-mini",
+            "gpt-4o-mini", "deepseek-chat", "kimi-k2.1-pro", "qwen-plus",
         ])
         self.cb_text_model.setCurrentText(cfg.get("text_model", ""))
         self.cb_text_model.setCurrentIndex(-1 if not cfg.get("text_model") else 0)
@@ -921,7 +918,7 @@ class MainWindow(QMainWindow):
         el = time.monotonic() - self._busy_t0
         if self._busy_step == 0:
             self.char_status.setText(
-                f"⏳ 生成中… 已用 {_fmt_mmss(el)}（方舟一张约 1–2 分钟，别关窗口）")
+                f"⏳ 生成中… 已用 {_fmt_mmss(el)}（一张约 1–2 分钟，别关窗口）")
         elif self._busy_step == 1:
             self.statusBar().showMessage(f"AI 正在写文案… 已用 {_fmt_mmss(el)}")
         elif self._busy_step == 2:

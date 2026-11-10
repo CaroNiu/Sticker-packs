@@ -78,12 +78,12 @@ DEFAULT_CONFIG = {
     "base_url": "",
     "skill_dir": str(DEFAULT_SKILL_DIR),
     "packs_dir": str(PROJECT_ROOT / "packs"),
-    "gen_model": "gpt-image-2.6-flare",
-    "character_model": "gpt-image-2.6-sunburst",
+    "gen_model": "gpt-image-1",
+    "character_model": "gpt-image-1",
     "quality": "medium",
     "text_api_key": "",
     "text_base_url": "",
-    "text_model": "glm-5.3-flash",
+    "text_model": "gpt-4o-mini",
     "jobs": 4,
     "style": "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
     "frame_ms": 120,
@@ -92,6 +92,9 @@ DEFAULT_CONFIG = {
 }
 
 BANNED = ["微信", "wechat", "腾讯", "官方", "认证", "正版"]
+
+# 开源通用化：接口地址留空一律回落 OpenAI 官方（任何 OpenAI 兼容服务填地址即可覆盖）
+OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 
 # 新项目默认 8 张：3 回复、2 情绪、2 关系、1 场景（参考 skill 的 references/writing.md）
 DEFAULT_STICKERS = [
@@ -138,6 +141,11 @@ def save_config(cfg):
 
 # ---------- skill 加载 ----------
 
+def _is_ark_base(base_url):
+    """base_url 是否指向火山方舟（唯一已知需要 JSON 协议适配的服务），其余全走 OpenAI 兼容链路。"""
+    return "volces.com" in (base_url or "")
+
+
 def load_sticker(skill_dir):
     f = Path(skill_dir) / "sticker.py"
     if not f.exists() and BUNDLED_SKILL.exists():
@@ -163,17 +171,18 @@ def load_sticker(skill_dir):
 
     mod.load_pack = _load_pack_utf8
 
-    # 火山方舟适配：base_url 是 volces.com 时改走方舟的 JSON 接口（_edit_ark），
-    # 其余（OpenAI 官方或任意 OpenAI 兼容网关）仍用 skill 原版 multipart 逻辑。
-    # 按调用时的环境变量分发，不改 skill 源文件。
-    _orig_edit = mod._edit
+    # 图片接口分发：唯一已知需要协议适配的是火山方舟（volces.com，JSON 接口），
+    # 其余一律走 OpenAI 兼容 multipart /images/edits——OpenAI 官方、中转聚合网关、
+    # 本地推理服务等通用。按调用时的环境变量分发，不改 skill 源文件。
+    mod._edit_openai_compat = mod._edit  # 原版实现挂回模块，便于测试替换与排查
 
-    def _edit_dispatch(image_path, prompt, size, background, model, quality, log_path, _orig=_orig_edit):
-        if "volces.com" in os.environ.get("OPENAI_BASE_URL", ""):
+    def _edit_dispatch(image_path, prompt, size, background, model, quality, log_path):
+        if _is_ark_base(os.environ.get("OPENAI_BASE_URL", "")):
             return _edit_ark(image_path, prompt, size, background, model, log_path)
-        # 走原版接口时明确记一条日志：这条路没有埋点、长超时，出问题极易表现为“静默无日志”
-        api_log("⚠ 路由 → skill 原版 multipart 接口（base_url 非方舟地址，排查设置里的 API 地址）")
-        return _orig(image_path, prompt, size, background, model, quality, log_path)
+        # 走 OpenAI 兼容接口时明确记一条日志：这条路没有埋点、长超时，
+        # 出问题极易表现为“静默无日志”
+        api_log("→ 图片路由：OpenAI 兼容 multipart 接口（/images/edits）")
+        return mod._edit_openai_compat(image_path, prompt, size, background, model, quality, log_path)
 
     mod._edit = _edit_dispatch
     return mod
@@ -473,14 +482,14 @@ def _extract_json(text):
 def ai_copywriting(cfg, hint="", style=""):
     """调文案对话模型，产出整套表情文案初稿（name/intro/reward_line/stickers）。
 
-    文案模型配置（text_*）留空时回落到图片组的 api_key/base_url。
+    文案模型配置（text_*）留空时回落到图片组的配置；地址都留空则用 OpenAI 官方。
     返回前做轻清洗：含义词去空格/去重/截 4 字，违禁词配字替换为含义词。
     """
-    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").rstrip("/")
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
     key = cfg.get("text_api_key") or cfg.get("api_key") or ""
     model = cfg.get("text_model") or ""
-    if not (base and key and model):
-        raise ValueError("文案模型没配全：设置 → 「文案对话模型」填 API Key、地址和模型名")
+    if not (key and model):
+        raise ValueError("文案模型没配全：设置 → 「文案对话模型」填 API Key 和模型名（接口地址留空 = OpenAI 官方）")
     user = f"角色设定/画风：{style or '可爱Q版'}"
     if hint:
         user += f"\n策划灵感提示：{hint}"
@@ -529,18 +538,20 @@ def ai_copywriting(cfg, hint="", style=""):
 
 def test_text_connection(cfg):
     """设置页「测试文案模型」：发一条小对话验证连通性。"""
-    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").rstrip("/")
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
     key = cfg.get("text_api_key") or cfg.get("api_key") or ""
     model = cfg.get("text_model") or ""
-    if not (base and key and model):
-        return "❌ 未配全：需要 API Key、地址、模型名"
+    if not (key and model):
+        return "❌ 未配全：需要 API Key 和模型名（接口地址留空 = OpenAI 官方）"
     try:
         out = _chat(base, key, model, "你是回声机", "回复两个字：正常", max_tokens=2048, timeout=60)
         return f"✅ 文案模型连通，回复：{out[:30]}" if out else "⚠ 连通但模型没吐内容（思考型模型？正常现象，可直接使用）"
     except RuntimeError as e:
         m = str(e)
         if "404" in m:
-            return "❌ 地址路径不对（404）：套餐入口填 …/api/plan，标准入口填 …/api/v3"
+            if _is_ark_base(base):
+                return "❌ 地址路径不对（404）：方舟套餐入口填 …/api/plan，标准入口填 …/api/v3"
+            return "❌ 地址路径不对（404）：确认接口地址（OpenAI 兼容地址一般以 /v1 结尾）"
         return f"❌ {m[:180]}"
     except Exception as e:
         return f"❌ {type(e).__name__}: {str(e)[:150]}"
@@ -627,11 +638,11 @@ def _extract_json_array(text):
 
 def ai_ideas(cfg, topic=""):
     """让文案模型出「利于传播的抽象表情」选题清单：[{word, scene, why}]。"""
-    base = (cfg.get("text_base_url") or cfg.get("base_url") or "").strip()
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or OPENAI_DEFAULT_BASE).strip()
     key = (cfg.get("text_api_key") or cfg.get("api_key") or "").strip()
     model = (cfg.get("text_model") or "").strip()
-    if not (base and key and model):
-        raise ValueError("文案模型没配全：需要模型名、API Key、地址（设置里第二组）")
+    if not (key and model):
+        raise ValueError("文案模型没配全：需要模型名和 API Key（接口地址留空 = OpenAI 官方，设置里第二组）")
     user = f"主题方向（可空）：{topic or '不限，给出当下最容易被转发使用的抽象表情创意'}"
     text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=6000, timeout=120)
     try:
