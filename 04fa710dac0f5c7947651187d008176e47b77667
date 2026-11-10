@@ -1,0 +1,25 @@
+core.py
+  8e123a7cd26f9c2d 552-566,568,692-715
+test_tweak.py
+  8e123a7cd26f9c2d 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "04fa710dac0f5c7947651187d008176e47b77667",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 1191,
+      "total_deletions": 942,
+      "accepted_lines": 1504,
+      "overriden_lines": 105
+    }
+  }
+}
