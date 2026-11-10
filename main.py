@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 import core
+import theme
+from theme import apply_theme
 
 STYLES = [
     "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
@@ -35,21 +37,21 @@ STEP_NAMES = ["① 定角色", "② 写文案", "③ 生成", "④ 合成·检�
 
 BAD_NAME_CHARS = " \t，。！？、,.!?/\\:\"'*<>|"
 
-# 总览面板各状态的配色（边框/底色/字色/字重）
+# 总览面板各状态的配色（边框/底色/字色/字重），与 theme.py 的调性一致
 CHIP_STYLES = {
-    "pending": ("#cccccc", "#fafafa", "#999999", "normal"),
-    "partial": ("#d99a4a", "#fdf6ee", "#8a6220", "normal"),
-    "run":     ("#4a90d9", "#eef5fc", "#2b6cb0", "bold"),
-    "done":    ("#67a867", "#f0f9f0", "#3c7a3c", "normal"),
-    "error":   ("#c00000", "#fdeeee", "#c00000", "bold"),
+    "pending": ("#D8D2C7", "#FFFFFF", "#8D877D", "normal"),
+    "partial": ("#E3A23C", "#FDF4E3", "#8A6215", "normal"),
+    "run":     ("#4A8FD4", "#EAF3FC", "#23639F", "bold"),
+    "done":    ("#57A56A", "#EDF7EE", "#2E7A42", "normal"),
+    "error":   ("#C43D3D", "#FCEDED", "#C43D3D", "bold"),
 }
 
 
 def _chip_ss(level):
     bd, bg, fg, wt = CHIP_STYLES[level]
     return (f"QPushButton{{border:1px solid {bd};background:{bg};color:{fg};"
-            f"border-radius:6px;padding:4px 10px;text-align:left;font-weight:{wt};}}"
-            f"QPushButton:checked{{border:2px solid {bd};}}")
+            f"border-radius:10px;padding:6px 12px;text-align:left;font-weight:{wt};}}"
+            f"QPushButton:checked{{border:2px solid {bd};font-weight:600;}}")
 
 
 def _fmt_mmss(sec):
@@ -99,8 +101,8 @@ class DropLabel(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumHeight(170)
         self.setStyleSheet(
-            "border: 2px dashed #aaaaaa; border-radius: 8px; color: #666666;"
-            "font-size: 14px; background: #fafafa;")
+            "QLabel{border: 2px dashed #E0B7A5; border-radius: 12px; color: #8D877D;"
+            "font-size: 14px; background: #FDFBF8;}")
         self._photo = None
 
     def dragEnterEvent(self, e):
@@ -187,7 +189,7 @@ class ApiLogPanel(QWidget):
         self.txt = QPlainTextEdit()
         self.txt.setReadOnly(True)
         self.txt.setMaximumHeight(150)
-        self.txt.setStyleSheet("font-family: Consolas, monospace; font-size: 12px;")
+        self.txt.setObjectName("apiLog")
         self.txt.setPlaceholderText("勾选后实时显示 API 调用细节…")
         self.txt.hide()
         v.addWidget(self.txt)
@@ -331,7 +333,7 @@ class SettingsDialog(QDialog):
         root.addWidget(g3)
 
         tip = QLabel("⚠ API Key 以明文保存在项目根的 config.json，请勿把该文件提交到 git。")
-        tip.setStyleSheet("color: #b00;")
+        tip.setStyleSheet("color: #C43D3D;")
         root.addWidget(tip)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -589,7 +591,9 @@ class TweakDialog(QDialog):
         quick.addStretch(1)
         v.addLayout(quick)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("开始微调（约 $0.05）")
+        ok = bb.button(QDialogButtonBox.Ok)
+        ok.setText("开始微调（约 $0.05）")
+        ok.setProperty("primary", True)
         bb.accepted.connect(self._go)
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
@@ -707,6 +711,8 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         root = QVBoxLayout(central)
+        root.setContentsMargins(16, 12, 16, 8)
+        root.setSpacing(12)
 
         # 顶部步骤导航 = 进度总览：每颗按钮两行（步骤名 + 该步状态），点击跳转
         nav = QHBoxLayout()
@@ -945,6 +951,7 @@ class MainWindow(QMainWindow):
         mid = QHBoxLayout()
         self.drop = DropLabel()
         self.drop.pathSelected.connect(lambda p: self.lbl_photo.setText(p))
+        self.drop.setMinimumWidth(340)
         mid.addWidget(self.drop, 2)
 
         side = QVBoxLayout()
@@ -963,7 +970,7 @@ class MainWindow(QMainWindow):
         form.addRow("角色风格", self.cb_char_style)
         side.addLayout(form)
         self.btn_char = QPushButton("生成角色图")
-        self.btn_char.setStyleSheet("font-weight: bold;")
+        self.btn_char.setProperty("primary", True)
         self.btn_char.clicked.connect(self.make_character)
         side.addWidget(self.btn_char)
         self.char_status = QLabel("")
@@ -979,7 +986,9 @@ class MainWindow(QMainWindow):
         self.lbl_char_preview = QLabel("角色图预览")
         self.lbl_char_preview.setAlignment(Qt.AlignCenter)
         self.lbl_char_preview.setMinimumSize(280, 280)
-        self.lbl_char_preview.setStyleSheet("border: 1px solid #ddd; background: #fff;")
+        self.lbl_char_preview.setStyleSheet(
+            f"QLabel{{border: 1px solid {theme.CARD_BORDER}; border-radius: 12px;"
+            f"background: {theme.CARD_BG}; color: #B3ADA1;}}")
         bottom.addWidget(self.lbl_char_preview, 1)
         v.addLayout(bottom, 1)
 
@@ -1034,7 +1043,7 @@ class MainWindow(QMainWindow):
             "可选灵感：主题/人设/卖点，如「无敌战斗猫，反差萌，日常吐槽」；留空让 AI 自由发挥")
         ai_row.addWidget(self.ed_hint, 1)
         self.btn_ai = QPushButton("✨ AI 生成整套文案")
-        self.btn_ai.setStyleSheet("font-weight: bold;")
+        self.btn_ai.setProperty("primary", True)
         self.btn_ai.clicked.connect(self.ai_copy)
         ai_row.addWidget(self.btn_ai)
         self.btn_ideas = QPushButton("💡 抽象创意参谋")
@@ -1113,7 +1122,7 @@ class MainWindow(QMainWindow):
         brow.addWidget(btn_del)
         brow.addStretch(1)
         self.lbl_validate = QLabel("")
-        self.lbl_validate.setStyleSheet("color: #b00;")
+        self.lbl_validate.setStyleSheet("color: #C43D3D;")
         brow.addWidget(self.lbl_validate, 1)
         btn_save = QPushButton("保存 pack.json")
         btn_save.clicked.connect(self.save_pack)
@@ -1248,7 +1257,7 @@ class MainWindow(QMainWindow):
         self.btn_dry.clicked.connect(self.dry_run)
         btns.addWidget(self.btn_dry)
         self.btn_gen = QPushButton("② 开始生成")
-        self.btn_gen.setStyleSheet("font-weight: bold;")
+        self.btn_gen.setProperty("primary", True)
         self.btn_gen.clicked.connect(self.start_gen)
         btns.addWidget(self.btn_gen)
         self.lbl_plan = QLabel("还没预估")
@@ -1292,6 +1301,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self.thumb_list)
         self.gen_log = QPlainTextEdit()
         self.gen_log.setReadOnly(True)
+        self.gen_log.setObjectName("consoleLog")
         v.addWidget(self.gen_log, 1)
         self.api_log_panel_gen = ApiLogPanel()
         v.addWidget(self.api_log_panel_gen)
@@ -1481,7 +1491,7 @@ class MainWindow(QMainWindow):
 
         btns = QHBoxLayout()
         self.btn_build = QPushButton("合成 build")
-        self.btn_build.setStyleSheet("font-weight: bold;")
+        self.btn_build.setProperty("primary", True)
         self.btn_build.clicked.connect(self.build)
         btns.addWidget(self.btn_build)
         self.btn_check = QPushButton("规范检查 check")
@@ -1783,6 +1793,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    apply_theme(app)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
