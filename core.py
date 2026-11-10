@@ -415,14 +415,56 @@ def _chat(base, key, model, system, user, max_tokens=3000, timeout=180):
     raise RuntimeError(str(last))
 
 
+def _balanced_json(t, start):
+    """从 t[start]（应为 '{'）开始找配对 '}'（正确处理字符串/转义），返回子串或 None。
+
+    贪婪正则 r"\\{.*\\}" 在 JSON 前后还有文本、或文本里有别的花括号时会匹配过宽，
+    平衡扫描精确取第一个完整对象。
+    """
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(t)):
+        c = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return t[start:i + 1]
+    return None
+
+
+def _strip_think(text):
+    """思考型模型（deepseek-r1/glm 等）会吐 <think>…</think>，思考里也可能有花括号。"""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+
+
 def _extract_json(text):
-    """从模型输出里抠 JSON：剥代码围栏，失败再抓首尾大括号。"""
-    t = text.strip()
-    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S)
+    """从模型输出里抠 JSON：剥 <think> 与代码围栏，整块解析失败再做平衡扫描。"""
+    t = _strip_think(text)
+    t = re.sub(r"^```(?:json)?\s*", "", t)
+    t = re.sub(r"\s*```$", "", t)
     try:
         return json.loads(t)
     except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", t, flags=re.S)
+        for m in re.finditer(r"\{", t):
+            cand = _balanced_json(t, m.start())
+            if cand is not None:
+                try:
+                    return json.loads(cand)
+                except json.JSONDecodeError:
+                    continue
+        m = re.search(r"\{.*\}", t, flags=re.S)  # 老路径兜底
         if m:
             return json.loads(m.group(0))
         raise
@@ -443,11 +485,20 @@ def ai_copywriting(cfg, hint="", style=""):
     if hint:
         user += f"\n策划灵感提示：{hint}"
     user += "\n请按系统规则产出整套文案 JSON。"
-    text = _chat(base, key, model, COPY_SYSTEM, user)
+    # max_tokens 给足：思考型模型的 <think> 也耗 token，太小会把 JSON 截断成废文本
+    text = _chat(base, key, model, COPY_SYSTEM, user, max_tokens=6000)
     try:
         data = _extract_json(text)
     except Exception:
-        raise ValueError(f"模型输出不是合法 JSON，换模型或重试。输出开头：{text[:120]}")
+        # 自动纠偏重试：模型输出思考文本/格式跑偏时，带着反馈强制再来一次
+        user2 = user + ("\n\n⚠ 你上一次的输出没有任何合法 JSON（可能输出了思考过程或设计说明）。"
+                        "这次必须直接输出一个 JSON 对象，从 { 开始到 } 结束，"
+                        "不要思考过程、不要解释、不要围栏以外的任何文字。")
+        text2 = _chat(base, key, model, COPY_SYSTEM, user2, max_tokens=6000)
+        try:
+            data = _extract_json(text2)
+        except Exception:
+            raise ValueError(f"模型输出不是合法 JSON（已自动纠偏重试 1 次），换模型或重试。输出开头：{text2[:120]}")
 
     name = str(data.get("name") or "").strip()
     intro = str(data.get("intro") or "").strip()
