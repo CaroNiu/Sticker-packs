@@ -59,6 +59,17 @@ def _fmt_mmss(sec):
     return f"{sec // 60}:{sec % 60:02d}"
 
 
+def _counter_row(field, lbl):
+    """输入框 + 右侧字数计数标签，合成一行（省得计数单独占一行）。"""
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(6)
+    h.addWidget(field, 1)
+    h.addWidget(lbl)
+    return w
+
+
 # ---------- 后台线程 ----------
 
 class Worker(QThread):
@@ -694,7 +705,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("表情包工坊 · ray-sticker-shop")
-        self.resize(1150, 800)
+        self.resize(1150, 860)
         self.cfg = core.load_config()
         self.sticker = None
         self.pack_dir = None       # 当前项目目录（含 pack.json）
@@ -1059,8 +1070,7 @@ class MainWindow(QMainWindow):
         self.ct_name = QLabel("0/8")
         self.ed_name.textChanged.connect(
             lambda t: self.ct_name.setText(f"{len(t.strip())}/8"))
-        form.addRow("表情名称（≤8字无标点）", self.ed_name)
-        form.addRow("", self.ct_name)
+        form.addRow("表情名称（≤8字无标点）", _counter_row(self.ed_name, self.ct_name))
 
         self.ed_intro = QTextEdit()
         self.ed_intro.setMaximumHeight(56)
@@ -1068,25 +1078,21 @@ class MainWindow(QMainWindow):
         self.ct_intro = QLabel("0/80")
         self.ed_intro.textChanged.connect(
             lambda: self.ct_intro.setText(f"{len(self.ed_intro.toPlainText())}/80"))
-        form.addRow("表情介绍（≤80字）", self.ed_intro)
-        form.addRow("", self.ct_intro)
+        form.addRow("表情介绍（≤80字）", _counter_row(self.ed_intro, self.ct_intro))
 
         self.ed_copyright = QLineEdit()
         self.ed_copyright.setPlaceholderText("设计师或工作室名")
         self.ct_cr = QLabel("0/10")
         self.ed_copyright.textChanged.connect(
             lambda t: self.ct_cr.setText(f"{len(t.strip())}/10"))
-        form.addRow("版权信息（≤10字）", self.ed_copyright)
-        form.addRow("", self.ct_cr)
+        form.addRow("版权信息（≤10字）", _counter_row(self.ed_copyright, self.ct_cr))
 
         self.ed_reward = QLineEdit()
         self.ed_reward.setPlaceholderText("5–15 字，和表情强相关，留空=不做赞赏图")
         self.ct_rw = QLabel("0/15")
         self.ed_reward.textChanged.connect(
             lambda t: self.ct_rw.setText(f"{len(t.strip())}/15"))
-        form.addRow("赞赏引导语", self.ed_reward)
-        form.addRow("", self.ct_rw)
-        v.addWidget(meta_box)
+        form.addRow("赞赏引导语", _counter_row(self.ed_reward, self.ct_rw))
 
         gen_box = QGroupBox("生成参数")
         gen_form = QFormLayout(gen_box)
@@ -1101,12 +1107,19 @@ class MainWindow(QMainWindow):
         self.cb_bg = QComboBox()
         self.cb_bg.addItems(["transparent", "opaque"])
         gen_form.addRow("背景", self.cb_bg)
-        v.addWidget(gen_box)
+
+        # 两个表单并排：把垂直空间让给下面的表情文案表格
+        top_boxes = QHBoxLayout()
+        top_boxes.addWidget(meta_box, 2)
+        top_boxes.addWidget(gen_box, 1)
+        v.addLayout(top_boxes)
 
         sticker_box = QGroupBox("表情文案（8–24 张；含义词 ≤4 字且不重复；动作写具体身体动作，英文）")
         sv = QVBoxLayout(sticker_box)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["#", "含义词", "配字", "动作（英文）"])
+        self.table.setMinimumHeight(320)
+        self.table.verticalHeader().setDefaultSectionSize(34)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
