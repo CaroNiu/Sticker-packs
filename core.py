@@ -96,16 +96,17 @@ BANNED = ["微信", "wechat", "腾讯", "官方", "认证", "正版"]
 # 开源通用化：接口地址留空一律回落 OpenAI 官方（任何 OpenAI 兼容服务填地址即可覆盖）
 OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 
-# 新项目默认 8 张：3 回复、2 情绪、2 关系、1 场景（参考 skill 的 references/writing.md）
+# 新项目默认 8 张（无 Key 手动模式的开箱模板）：功能位保留，态度换血——
+# 熊猫头式万能回复/情绪爆发/认怂摆烂，动作演到夸张
 DEFAULT_STICKERS = [
-    {"word": "收到", "caption": "收到", "action": "nods twice firmly and gives a big thumbs up, then returns to standing"},
-    {"word": "好的", "caption": "好的", "action": "salutes with one paw, eyes bright, then lowers the paw back down"},
-    {"word": "稍等", "caption": "稍等", "action": "holds up one finger, glances at an imaginary watch, then looks back up"},
-    {"word": "哈哈哈", "caption": "哈哈哈", "action": "rolls on the floor laughing with legs kicking in the air, then sits back up"},
-    {"word": "无语", "caption": "无语", "action": "stares blankly with a flat mouth, then slowly turns the head away with a big sigh"},
-    {"word": "谢谢", "caption": "谢谢", "action": "bows deeply with both hands together, then pops back up with a big smile"},
-    {"word": "抱抱", "caption": "抱抱", "action": "opens both arms wide and squeezes an invisible friend, cheeks glowing"},
-    {"word": "加油", "caption": "加油", "action": "raises both fists in the air cheering with sparkling eyes, then pumps fists again"},
+    {"word": "已阅", "caption": "已阅", "action": "flicks one paw as if stamping a document, then slides the invisible paper away without looking up"},
+    {"word": "行吧", "caption": "行吧", "action": "shrugs with both palms up, then waves one hand dismissively while rolling the eyes upward"},
+    {"word": "等会", "caption": "等会", "action": "holds up one finger without lifting the head, then slowly points at an imaginary watch with a flat stare"},
+    {"word": "笑死", "caption": "笑死", "action": "slaps the floor laughing with legs kicking in the air, wipes a tear, then points at the viewer while gasping"},
+    {"word": "就这", "caption": "就这？", "action": "leans back with a slow eye-roll up to the ceiling, then tilts the head with a smug half-smirk"},
+    {"word": "下次一定", "caption": "下次一定", "action": "bows politely with hands together, then immediately turns away and sneaks off tiptoeing"},
+    {"word": "躺了", "caption": "躺了", "action": "melts backward into a boneless puddle on the floor, one arm draped over the face, tail flopping last"},
+    {"word": "再说", "caption": "再说", "action": "turns the head away with a big slow blink, then waves one paw backward over the shoulder while walking off"},
 ]
 
 ASSET_SPECS = [
@@ -357,19 +358,25 @@ def test_connection(cfg):
 
 # ---------- 文案模型（对话补全）----------
 
-COPY_SYSTEM = """你是微信表情开放平台的资深表情包策划师。为角色设计一整套表情文案。
-硬性规范（违反会被平台驳回）：
+COPY_SYSTEM = """你是微信表情开放平台的资深表情包策划师，设计逻辑对标熊猫头、金馆长这类国民级表情包：
+每一张都是一次社交动作（怼人/认怂/阴阳），收到的人能在下一句话里直接把它扔出去。
+角色基准脸自带态度（谜之自信/无赖感），整套文案必须延续这个底色——
+温和礼貌、滴水不漏的表达等于失败；老老实实的「收到/好的/谢谢/加油/哈哈哈」原样出现等于失败。
+硬性规范（违反会被平台驳回，必须遵守）：
 - name：表情名称，1-8 个汉字，无标点无空格，不能含"微信/wechat/腾讯/官方/认证/正版"
 - intro：表情介绍，不超过 80 字，讲角色性格或小情景，不能含上述违禁词
 - reward_line：赞赏引导语，5-15 字，与表情强相关
 - stickers：8-12 张。每张：
-  - word：含义词，不超过 4 个汉字，彼此不重复，不带任何标点符号（平台要求）
+  - word：含义词，不超过 4 个汉字，彼此不重复，不带任何标点符号（平台要求）。
+    要口语化、能直接当回击用：爱答不理的「嗯」「行吧」「已阅」好过老实的「收到」「好的」；
+    禁用首批蹦出的常规词原样（收到/好的/稍等/谢谢/不客气/加油/晚安/抱抱），用带态度的变体替代
   - caption：配字（默认与 word 相同，可加口语化语气字，同样不带违禁词）
-  - action：动作用英文写，必须是一套连贯具体的身体动作（2-3 个动作串联，
-    如 "nods twice firmly, then raises both fists cheering"），
-    不要抽象形容词（不要 cute/happy 这种），动作要能体现该含义词
-- 选题覆盖：3 张日常回复（收到/好的/稍等类）+ 2 张情绪（哈哈/无语类）
-  + 2 张关系互动（谢谢/抱抱类）+ 1-2 张场景梗
+  - action：动作用英文写，必须是一套连贯具体的身体动作（2-3 个动作串联），
+    把情绪演到夸张——拍桌、翻白眼、瘫成一滩、扣手机像盖章、笑到捶地，
+    不要抽象形容词（不要 cute/happy 这种），动作要能体现该含义词的态度
+- 选题覆盖（功能位保留，态度换血）：3 张万能回复（敷衍/爱答不理式，别老实回复）
+  + 2 张情绪爆发（演到夸张失真）+ 2 张社交武器（怼人/阴阳，玩笑级不带脏）
+  + 1-2 张认怂/摆烂（理不直气也壮的无赖感）
 只输出纯 JSON，不要 markdown 代码围栏，不要任何解释文字，格式：
 {"name":"...","intro":"...","reward_line":"...","stickers":[{"word":"...","caption":"...","action":"..."}]}"""
 
