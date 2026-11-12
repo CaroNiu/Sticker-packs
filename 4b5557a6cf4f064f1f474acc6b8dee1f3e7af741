@@ -1,0 +1,29 @@
+.github/ISSUE_TEMPLATE/bug.yml
+  8e123a7cd26f9c2d 1-49
+README.md
+  8e123a7cd26f9c2d 26-28,166-197
+.github/ISSUE_TEMPLATE/feature.yml
+  8e123a7cd26f9c2d 1-21
+.github/ISSUE_TEMPLATE/config.yml
+  8e123a7cd26f9c2d 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "4b5557a6cf4f064f1f474acc6b8dee1f3e7af741",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 220,
+      "total_deletions": 0,
+      "accepted_lines": 859,
+      "overriden_lines": 0
+    }
+  }
+}
