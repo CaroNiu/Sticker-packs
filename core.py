@@ -792,21 +792,38 @@ def make_character(sticker, cfg, photo, out_path, style, desc=""):
 
 
 def stale_sheets(pack_dir):
-    """精灵图 mtime 早于角色图 mtime 的编号列表——它们是旧角色画的。
-
-    「已生成的自动跳过」的断点续跑机制在这里会坑人：换了角色图/重写文案后
-    开始生成，旧图全部被跳过，新旧形象混在一套里。返回如 ["1","3"] 供 UI 提示。
-    """
+    """精灵图 mtime 早于角色图 mtime 的编号列表——它们是旧角色画的。"""
     p = Path(pack_dir)
     ch = p / "character.png"
     if not ch.exists():
         return []
     t0 = ch.stat().st_mtime
-    out = []
-    for f in sorted((p / "sheets").glob("*.png")):
-        if f.stem.isdigit() and f.stat().st_mtime < t0:
-            out.append(str(int(f.stem)))
-    return out
+    return [str(int(f.stem)) for f in sorted((p / "sheets").glob("*.png"))
+            if f.stem.isdigit() and f.stat().st_mtime < t0]
+
+
+def stale_assets(pack_dir):
+    """配套素材 mtime 早于角色图 mtime 的文件名列表（旧角色画的素材）。"""
+    p = Path(pack_dir)
+    ch = p / "character.png"
+    if not ch.exists():
+        return []
+    t0 = ch.stat().st_mtime
+    return [f.name for f in sorted((p / "assets_raw").glob("*.png"))
+            if f.stat().st_mtime < t0]
+
+
+def _need_gen(target, ref_mtime):
+    """「跳过已有」的正确判据：不存在 → 要生成；存在但早于角色图（旧角色
+    画的精灵图/素材）→ 也要生成，否则换角色后新旧形象混在一套里。"""
+    if not target.exists():
+        return True
+    return ref_mtime and target.stat().st_mtime < ref_mtime
+
+
+def _ref_mtime(pack_dir):
+    ch = Path(pack_dir) / "character.png"
+    return ch.stat().st_mtime if ch.exists() else 0.0
 
 
 def dry_run(sticker, cfg, pack_dir, with_assets=True):
@@ -814,7 +831,8 @@ def dry_run(sticker, cfg, pack_dir, with_assets=True):
     p, pack = sticker.load_pack(str(pack_dir))
     jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
                          cfg.get("quality", "medium"), with_assets, None)
-    todo = [j for j in jobs if not j[0].exists()]
+    rm = _ref_mtime(pack_dir)
+    todo = [j for j in jobs if _need_gen(j[0], rm)]
     return {"count": len(todo), "usd": round(len(todo) * 0.052, 2), "total": len(jobs)}
 
 
@@ -864,7 +882,10 @@ def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress
     redo_set = {int(x) for x in redo if str(x).strip().isdigit()} if redo else None
     jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
                          cfg.get("quality", "medium"), with_assets, redo_set)
-    todo = [j for j in jobs if not j[0].exists()]
+    # 跳过判据：不存在 或 早于角色图（旧角色时代的精灵图/配套素材）→ 重做。
+    # redo 编号由 skill 的 _jobs 负责 unlink；素材不受 redo 影响、纯按新旧判据走。
+    rm = _ref_mtime(pack_dir)
+    todo = [j for j in jobs if _need_gen(j[0], rm)]
     total, done, errors = len(todo), 0, []
     if progress:
         progress(None, "total", str(total))

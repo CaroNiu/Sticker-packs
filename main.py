@@ -996,20 +996,30 @@ class MainWindow(QMainWindow):
         else:
             s2 = ("done", f"文案 {n} 张 ✓") if n else ("pending", "未保存文案")
 
-        # ③ 生成（精灵图 + 素材）
-        sheets = len(list((self.pack_dir / "sheets").glob("*.png"))) \
-            if (self.pack_dir / "sheets").exists() else 0
-        assets = len(list((self.pack_dir / "assets_raw").glob("*.png"))) \
-            if (self.pack_dir / "assets_raw").exists() else 0
+        # ③ 生成（精灵图 + 素材）：只统计「不陈旧」的——旧角色时代的图不算数，
+        # 否则换角色后概览还显示 5/5 ✓ 误导用户
+        ch = self.pack_dir / "character.png"
+        ch_m = ch.stat().st_mtime if ch.exists() else 0.0
+        def _fresh(d):
+            dd = self.pack_dir / d
+            lst = list(dd.glob("*.png")) if dd.exists() else []
+            return [f for f in lst if not ch_m or f.stat().st_mtime >= ch_m]
+        sheets = len(_fresh("sheets"))
+        assets = len(_fresh("assets_raw"))
+        stale_n = (len(list((self.pack_dir / "sheets").glob("*.png"))) if (self.pack_dir / "sheets").exists() else 0) - sheets \
+            + (len(list((self.pack_dir / "assets_raw").glob("*.png"))) if (self.pack_dir / "assets_raw").exists() else 0) - assets
         want_assets = self.cb_assets.isChecked() if hasattr(self, "cb_assets") else True
         if self._busy_step == 2 and self.gen_total:
             s3 = ("run", f"生成中 {self.gen_done}/{self.gen_total}")
-        elif sheets == 0:
+        elif sheets == 0 and stale_n == 0:
             s3 = ("pending", "还没生成")
+        elif sheets == 0 and stale_n:
+            s3 = ("partial", f"{stale_n} 张旧角色待重做")
         elif sheets >= n and (not want_assets or assets >= 5):
             s3 = ("done", f"精灵图 {sheets}/{n} ✓ · 素材 {assets}/5")
         else:
-            s3 = ("partial", f"精灵图 {sheets}/{n} · 素材 {assets}/5")
+            tag = f" · 旧图 {stale_n} 张待重做" if stale_n else ""
+            s3 = ("partial", f"精灵图 {sheets}/{n} · 素材 {assets}/5{tag}")
 
         # ④ 合成/检查/交付
         gif_dir = self.pack_dir / "submit" / "表情图"
@@ -1518,32 +1528,23 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "缺角色图", "请先在第 1 步生成角色图。")
             return
         redo = [x.strip() for x in self.ed_redo.text().replace("，", ",").split(",") if x.strip()]
-        # 陈旧检测：精灵图比角色图老的（旧角色画的）会被「跳过已有」逻辑放过，
-        # 导致新旧形象混在一套里——换过角色图/重写过文案后尤其常见
-        stale = core.stale_sheets(self.pack_dir)
-        if stale:
-            covered = {int(x) for x in redo if x.isdigit()}
-            todo = [s for s in stale if int(s) not in covered]
-            if todo:
-                box = QMessageBox(self)
-                box.setIcon(QMessageBox.Warning)
-                box.setWindowTitle("检测到旧角色时代的图")
-                box.setText(
-                    f"角色图是新生成的，但这 {len(stale)} 张精灵图比它更早："
-                    + "、".join(todo[:12]) + ("…" if len(todo) > 12 else "")
-                    + "\n它们是旧角色画的。直接开始会「跳过已有」，新旧形象混在一套里！")
-                rredo = QPushButton("重抽这些旧图（推荐）")
-                rkeep = QPushButton("按原计划（跳过旧图）")
-                rcancel = QPushButton("取消")
-                box.addButton(rredo, QMessageBox.YesRole)
-                box.addButton(rkeep, QMessageBox.NoRole)
-                box.addButton(rcancel, QMessageBox.RejectRole)
-                box.exec()
-                if box.clickedButton() is rcancel:
-                    return
-                if box.clickedButton() is rredo:
-                    redo = sorted(set(redo + todo), key=int)
-                    self.ed_redo.setText(",".join(redo))
+        # 陈旧告知：比角色图旧的精灵图/配套素材现在会自动重做（跳过判据已升级），
+        # 这里只让用户知情并确认费用——不再给「跳过旧图」选项（那会新旧混套）
+        n_old = len(core.stale_sheets(self.pack_dir)) + len(core.stale_assets(self.pack_dir))
+        if n_old:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Information)
+            box.setWindowTitle("检测到旧角色时代的图")
+            box.setText(
+                f"角色图是新生成的，但项目里有 {n_old} 张旧角色时代的图（精灵图/配套素材）。\n"
+                "本次开始会自动把它们重做成新形象（已计入本次生成的张数与费用）。")
+            go = QPushButton("继续，重做旧图")
+            rcancel = QPushButton("取消")
+            box.addButton(go, QMessageBox.YesRole)
+            box.addButton(rcancel, QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is not go:
+                return
         self.gen_log.clear()
         self._run("生成中…", core.gen_pack, self.sticker, self.cfg, self.pack_dir,
                   self.cb_assets.isChecked(), redo, step=2,
