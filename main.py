@@ -648,6 +648,10 @@ class IdeasDialog(QDialog):
         self.tbl.setColumnWidth(1, 110)
         self.tbl.verticalHeader().setVisible(False)
         v.addWidget(self.tbl, 1)
+        # 接口调用日志（默认收起，勾选展开；实时看请求/重试/耗时，排查出创意慢）
+        self.api_panel = ApiLogPanel()
+        v.addWidget(self.api_panel)
+        self.main.register_api_panel(self.api_panel)
         foot = QHBoxLayout()
         self.lbl_state = QLabel(
             "点「出创意」：文案模型会列 ~12 个抽象梗选题，勾选后填入灵感提示，再「AI 生成整套文案」。")
@@ -674,11 +678,26 @@ class IdeasDialog(QDialog):
 
     def _tick_elapsed(self):
         sec = int(time.time() - self._t0)
-        tip = "思考型模型（DeepSeek-R1 等）可能要 1–5 分钟，请耐心等；控制台有实时日志"
+        tip = "思考型模型（DeepSeek-R1 等）可能要 1–5 分钟，请耐心等；可勾选「显示后台调用日志」看进度"
         if sec < 45:
             self.lbl_state.setText(f"AI 正在出创意…（已 {sec} 秒）")
         else:
             self.lbl_state.setText(f"AI 正在出创意…（已 {sec} 秒）——{tip}")
+
+    def done(self, r):
+        # 所有关闭路径（点 X / 取消 / 填入灵感提示）的必经点：先注销日志面板防僵尸，
+        # worker 还在跑就断开回调让它自然结束（请求本身无法中断，忽略即可）
+        self.main.unregister_api_panel(self.api_panel)
+        if hasattr(self, "_tick"):
+            self._tick.stop()
+        w = getattr(self, "worker", None)
+        if w is not None and w.isRunning():
+            try:
+                w.done.disconnect(self._on_ideas)
+                w.failed.disconnect(self._on_ideas_fail)
+            except (TypeError, RuntimeError):
+                pass
+        super().done(r)
 
     def _on_ideas(self, ideas):
         self.btn_go.setEnabled(True)
@@ -791,6 +810,15 @@ class MainWindow(QMainWindow):
     def _on_api_line(self, line):
         for p in self.api_panels:
             p.append(line)
+
+    def register_api_panel(self, p):
+        """子对话框把自己的日志面板挂进分发列表（挂起期间实时收日志）。"""
+        if p not in self.api_panels:
+            self.api_panels.append(p)
+
+    def unregister_api_panel(self, p):
+        if p in self.api_panels:
+            self.api_panels.remove(p)
 
     def _resume_last(self):
         """启动时自动加载最近项目；没有就停在初始页。"""
