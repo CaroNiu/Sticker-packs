@@ -694,7 +694,9 @@ class IdeasDialog(QDialog):
         self.main.register_api_panel(self.api_panel)
         foot = QHBoxLayout()
         self.lbl_state = QLabel(
-            "点「出创意」：文案模型会列 ~12 个抽象梗选题，勾选后填入灵感提示，再「AI 生成整套文案」。")
+            "点「出创意」：文案模型会列 ~12 个抽象梗选题，勾选后填入灵感提示，再「AI 生成整套文案」。\n"
+            "提示：思考型模型（DeepSeek-R1、GLM 思考版等）出创意要 1–5 分钟；"
+            "设置里换非思考模型（如 deepseek-chat、glm-4-flash）10–30 秒。")
         self.lbl_state.setWordWrap(True)
         foot.addWidget(self.lbl_state, 1)
         b_fill = QPushButton("把选中词填入灵感提示")
@@ -737,12 +739,17 @@ class IdeasDialog(QDialog):
         if hasattr(self, "_tick"):
             self._tick.stop()
         w = getattr(self, "worker", None)
-        if w is not None and w.isRunning():
+        if w is not None:
             try:
-                w.done.disconnect(self._on_ideas)
-                w.failed.disconnect(self._on_ideas_fail)
-            except (TypeError, RuntimeError):
-                pass
+                running = w.isRunning()
+            except RuntimeError:
+                running = False  # worker 已被 deleteLater 回收，只剩 Python 空壳——正常完成态
+            if running:
+                try:
+                    w.done.disconnect(self._on_ideas)
+                    w.failed.disconnect(self._on_ideas_fail)
+                except (TypeError, RuntimeError):
+                    pass
         super().done(r)
 
     def _on_ideas(self, ideas):
