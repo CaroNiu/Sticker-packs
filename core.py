@@ -707,29 +707,36 @@ def ai_ideas(cfg, topic=""):
 
 # ---------- 操作（都在 worker 线程里跑）----------
 
-def character_prompt(style):
+def character_prompt(style, desc=""):
     """第①步角色图提示词：熊猫头式「情绪原型」视觉公式。
 
     skill 的 cmd_character 写死 cute 全身像——萌则萌矣，但没有传播攻击性。
     表情包的半条命在角色本身：头占比要大（表情是唯一信息载体，脸小了情绪就稀），
     默认表情自带态度（谜之自信/不屑/无赖感——熊猫头的脸底色就是贱，不是友好微笑）。
     这张基准脸会经「same face」传导到全套每张精灵图，所以态度必须从第一步定调。
+    desc 为可选的角色描述（穿搭/配饰/气质细节），非空时注入——照片没画出来的
+    信息靠文字补：模型会把它融合进识别特征里。
     """
-    return (
+    p = (
         "Turn the subject of this photo into an original, heavily stylized meme-style cartoon sticker character "
         "(think the attitude of classic meme-face characters, do not copy any existing one). "
         "The BIG head with an oversized expressive face is the hero: the face alone must carry the whole emotion. "
         "Tiny simplified body, or head-and-shoulders only, is fine. "
         "The default expression comes with ATTITUDE: smug, cheeky, a little unimpressed, "
         "half-smirking — NOT a friendly smile, NOT cute-for-cute's-sake. "
+    )
+    if desc.strip():
+        p += f"Custom character details (must blend in naturally): {desc.strip()}. "
+    p += (
         f"Art style: {style}. "
         "Keep the identifying features (hairstyle, glasses, markings, signature clothing or fur pattern). "
         "It must clearly read as a drawing, never photorealistic. Front-facing, centered, "
         "fully transparent background, no text, no border."
     )
+    return p
 
 
-def make_character(sticker, cfg, photo, out_path, style):
+def make_character(sticker, cfg, photo, out_path, style, desc=""):
     """照片 → 卡通角色图。
 
     提示词用 core 的「情绪原型」版（skill 写死 cute 全身像，萌但没攻击性）；
@@ -739,7 +746,7 @@ def make_character(sticker, cfg, photo, out_path, style):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with env_patch(cfg):
         png = sticker._edit(
-            str(photo), character_prompt(style), "1024x1024", "transparent",
+            str(photo), character_prompt(style, desc), "1024x1024", "transparent",
             cfg.get("character_model", DEFAULT_CONFIG["character_model"]),
             cfg.get("quality", "medium"),
             out_path.parent / "costs.jsonl",

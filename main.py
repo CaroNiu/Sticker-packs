@@ -1030,6 +1030,13 @@ class MainWindow(QMainWindow):
             "默认第一项是「熊猫头式情绪原型」：大头、表情浓度拉满、自带态度的脸。\n"
             "这张基准脸会传导到全套每张表情——想要温和治愈风就换可爱 Q 版。")
         form.addRow("角色风格", self.cb_char_style)
+        self.ed_char_desc = QLineEdit()
+        self.ed_char_desc.setPlaceholderText(
+            "可选，照片没画到的细节：如「戴黑框眼镜、灰色卫衣、头顶一撮呆毛」")
+        self.ed_char_desc.setToolTip(
+            "补充穿搭/配饰/气质等照片上看不到的信息，会融合进角色设定；留空 = 纯照片转绘。\n"
+            "会随项目保存，重新生成角色图时自动带出。")
+        form.addRow("角色描述", self.ed_char_desc)
         side.addLayout(form)
         self.btn_char = QPushButton("生成角色图")
         self.btn_char.setProperty("primary", True)
@@ -1078,9 +1085,10 @@ class MainWindow(QMainWindow):
             return
         out = self.pack_dir / "character.png"
         style = self.cb_char_style.currentText().strip() or STYLES[0]
+        desc = self.ed_char_desc.text().strip()
         self.char_status.setText("⏳ 提交生成…")
         self._run("正在生成角色图…", core.make_character, self.sticker, self.cfg,
-                  photo, out, style, step=0, on_done=self._on_character_done,
+                  photo, out, style, desc, step=0, on_done=self._on_character_done,
                   on_fail=lambda m: self.char_status.setText(f"❌ 生成失败，可重试：{m[:120]}"))
 
     def _on_character_done(self, result):
@@ -1266,6 +1274,7 @@ class MainWindow(QMainWindow):
             "copyright": self.ed_copyright.text().strip(),
             "reward_line": self.ed_reward.text().strip(),
             "character": "character.png",
+            "character_desc": self.ed_char_desc.text().strip(),
             "style": self.cb_pack_style.currentText().strip(),
             "frame_ms": self.sp_ms.value(),
             "background": self.cb_bg.currentText(),
@@ -1285,6 +1294,7 @@ class MainWindow(QMainWindow):
         self.ed_copyright.setText(pack.get("copyright", ""))
         self.ed_reward.setText(pack.get("reward_line", ""))
         self.cb_pack_style.setCurrentText(pack.get("style", ""))
+        self.ed_char_desc.setText(pack.get("character_desc", ""))
         self.sp_ms.setValue(int(pack.get("frame_ms", 120)))
         self.cb_bg.setCurrentText(pack.get("background", "transparent"))
         self.table.setRowCount(0)
