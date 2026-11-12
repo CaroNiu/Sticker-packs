@@ -128,6 +128,8 @@ class Worker(QThread):
             else:
                 result = self.fn(*self.args)
             self.done.emit(result)
+        except core.Cancelled as e:  # 用户点了停止：不算错误，走失败通道但带 ⛔ 标记
+            self.failed.emit(f"⛔ {e}")
         except SystemExit as e:  # sticker.py 用 sys.exit 报业务错误
             self.failed.emit(str(e) or "操作被终止")
         except Exception as e:
@@ -673,6 +675,11 @@ class IdeasDialog(QDialog):
         self.btn_go = QPushButton("🧠 出创意")
         self.btn_go.clicked.connect(self._go)
         row.addWidget(self.btn_go)
+        self.btn_stop_ideas = QPushButton("⛔ 停止")
+        self.btn_stop_ideas.setEnabled(False)
+        self.btn_stop_ideas.setToolTip("中止出创意：正在跑的请求跑完即弃，不会填入结果")
+        self.btn_stop_ideas.clicked.connect(self._stop)
+        row.addWidget(self.btn_stop_ideas)
         v.addLayout(row)
         self.tbl = QTableWidget(0, 3)
         self.tbl.setHorizontalHeaderLabels(["选", "词（1–4字）", "使用场景（传播理由）"])
@@ -697,6 +704,7 @@ class IdeasDialog(QDialog):
 
     def _go(self):
         self.btn_go.setEnabled(False)
+        self.btn_stop_ideas.setEnabled(True)
         self._t0 = time.time()
         if not hasattr(self, "_tick"):
             self._tick = QTimer(self)
@@ -708,6 +716,11 @@ class IdeasDialog(QDialog):
         self.worker.failed.connect(self._on_ideas_fail)
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
+
+    def _stop(self):
+        core.request_cancel()
+        self.btn_stop_ideas.setEnabled(False)
+        self.lbl_state.setText("正在中止…正在跑的请求跑完即弃（最多几秒）")
 
     def _tick_elapsed(self):
         sec = int(time.time() - self._t0)
@@ -734,6 +747,7 @@ class IdeasDialog(QDialog):
 
     def _on_ideas(self, ideas):
         self.btn_go.setEnabled(True)
+        self.btn_stop_ideas.setEnabled(False)
         if hasattr(self, "_tick"):
             self._tick.stop()
         sec = int(time.time() - self._t0)
@@ -750,6 +764,7 @@ class IdeasDialog(QDialog):
 
     def _on_ideas_fail(self, msg):
         self.btn_go.setEnabled(True)
+        self.btn_stop_ideas.setEnabled(False)
         if hasattr(self, "_tick"):
             self._tick.stop()
         self.lbl_state.setText(f"❌ {msg}")
@@ -808,6 +823,19 @@ class MainWindow(QMainWindow):
             nav.addWidget(b)
             self.step_btns.append(b)
         nav.addStretch(1)
+        # 全局「戒断」按钮：任何阶段的任务运行中都可见可用，点了走协作式取消
+        self.btn_stop = QPushButton("⛔ 停止任务")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setToolTip(
+            "中止当前任务（AI 文案/创意/角色图/批量生成/GIF 合成都支持）。\n"
+            "已完成的产物保留；未开跑的立即跳过；正在跑的请求跑完即弃（最多等几秒）。")
+        self.btn_stop.setStyleSheet(
+            "QPushButton{color:#C43D3D;border:1px solid #E0B7A5;border-radius:8px;"
+            "padding:4px 14px;background:#FDF4F2;font-weight:600;}"
+            "QPushButton:hover{background:#FCEDED;}"
+            "QPushButton:disabled{color:#B3ADA1;border-color:#E5E0D8;background:transparent;font-weight:400;}")
+        self.btn_stop.clicked.connect(self._request_stop)
+        nav.addWidget(self.btn_stop)
         root.addLayout(nav)
 
         self.stack = QStackedWidget()
@@ -830,7 +858,7 @@ class MainWindow(QMainWindow):
         self._refresh_overview()
         core.add_log_listener(self.api_line.emit)
         self.api_line.connect(self._on_api_line)
-        self.api_panels = [self.api_log_panel_char, self.api_log_panel_gen]
+        self.api_panels = [self.api_log_panel_char, self.api_log_panel_pack, self.api_log_panel_gen]
 
         # 每秒刷新一次长任务的已用时/预计剩余
         self._tick_timer = QTimer(self)
@@ -1233,6 +1261,9 @@ class MainWindow(QMainWindow):
         btn_save.clicked.connect(self.save_pack)
         brow.addWidget(btn_save)
         sv.addLayout(brow)
+        # 接口调用日志（默认收起，勾选展开）：AI 写文案/测连接时看请求、重试、耗时
+        self.api_log_panel_pack = ApiLogPanel()
+        v.addWidget(self.api_log_panel_pack)
         v.addWidget(sticker_box, 1)
 
         foot = QHBoxLayout()
@@ -1847,8 +1878,9 @@ class MainWindow(QMainWindow):
             return
         self._busy_step = step
         self._busy_t0 = time.monotonic()
-        self.statusBar().showMessage(waiting)
+        self.statusBar().showMessage(waiting + "（随时可点右上「⛔ 停止任务」）")
         self._refresh_overview()
+        self.btn_stop.setEnabled(True)
         self.worker = Worker(fn, *args, with_progress=with_progress)
         if with_progress and progress_slot is not None:
             self.worker.progress.connect(progress_slot)
@@ -1856,19 +1888,38 @@ class MainWindow(QMainWindow):
             lambda r: (self._finish_busy(), self.statusBar().clearMessage(),
                        on_done(r) if on_done else None))
         self.worker.failed.connect(
-            lambda msg: (self._finish_busy(), self.statusBar().clearMessage(),
-                         self._on_fail(msg, on_fail)))
+            lambda msg: (self._finish_busy(), self._on_fail(msg, on_fail)))
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.finished.connect(self._on_worker_gone)
         self.worker.start()
 
-    def _on_worker_gone(self):
-        """线程真正结束时清引用，避免留僵尸（isRunning 对已删除对象会炸）。"""
-        self.worker = None
+    def _request_stop(self):
+        """戒断按钮：协作式取消。立即反馈，检查点处真正生效。"""
+        core.request_cancel()
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setText("正在中止…")
+        self.statusBar().showMessage(
+            "正在中止：未开跑的任务立即跳过；正在跑的请求跑完即弃（最多几秒）…")
 
-    def _finish_busy(self):
+    def _on_worker_gone(self):
+        """线程真正结束时清引用和取消标志，避免留僵尸/污染下一任务。"""
+        gone = self.sender()  # 本次 finished 的线程对象
+        if self.worker is not None and self.worker is not gone:
+            # 旧线程收尾期间用户已启动新任务（self.worker 已指向新任务）：
+            # 不能动按钮/清取消标志，那是新任务的状态
+            return
+        self.worker = None
+        core.reset_cancel()
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setText("⛔ 停止任务")
+
+    def _finish_busy(self, cancelled=False):
         self._busy_step = None
         self._refresh_overview()
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setText("⛔ 停止任务")
+        if cancelled:
+            self.statusBar().showMessage("已中止：已完成的产物都保留，可继续操作", 6000)
 
     def _on_fail(self, msg, custom):
         if custom:

@@ -419,8 +419,11 @@ def _chat(base, key, model, system, user, max_tokens=3000, timeout=180, net_retr
     """
     last = None
     for attempt in range(4):
+        check_cancel("等待文案请求")
         try:
-            return _chat_once(base, key, model, system, user, max_tokens, timeout)
+            result = _chat_once(base, key, model, system, user, max_tokens, timeout)
+            check_cancel("文案请求已返回，结果作废")
+            return result
         except urllib.error.HTTPError as e:
             msg = e.read().decode(errors="replace")[:300]
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
@@ -736,6 +739,36 @@ def character_prompt(style, desc=""):
     return p
 
 
+# ---------- 协作式取消（戒断按钮） ----------
+
+class Cancelled(Exception):
+    """用户点了停止。已完成的产物保留，未开跑的跳过。"""
+
+
+_CANCEL = threading.Event()
+
+
+def request_cancel():
+    """UI 线程调用：请求中止当前任务。正在跑的请求无法打断（socket 阻塞），
+    在下一个检查点生效——未开跑的立即跳过，进行中的跑完即弃。"""
+    _CANCEL.set()
+    api_log("⛔ 收到停止请求：未开跑的任务将跳过，进行中的请求跑完即弃")
+
+
+def is_cancelled():
+    return _CANCEL.is_set()
+
+
+def reset_cancel():
+    """上一任务线程彻底结束后由 UI 清标志，保证下一任务干净开始。"""
+    _CANCEL.clear()
+
+
+def check_cancel(where=""):
+    if _CANCEL.is_set():
+        raise Cancelled(f"已按你的要求中止{('（' + where + '）') if where else ''}")
+
+
 def make_character(sticker, cfg, photo, out_path, style, desc=""):
     """照片 → 卡通角色图。
 
@@ -818,8 +851,10 @@ def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress
         return {"errors": [], "total": 0, "cost": sticker.total_cost(p)}
 
     def run_one(job):
+        check_cancel("排队中")
         return job, sticker._gen_one(job)
 
+    cancelled_out = 0
     with cf.ThreadPoolExecutor(int(cfg.get("jobs") or 4)) as ex:
         futs = {ex.submit(run_one, j): j for j in todo}
         for fut in cf.as_completed(futs):
@@ -827,6 +862,9 @@ def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress
             try:
                 _, msg = fut.result()
                 kind, detail = "ok", msg
+            except Cancelled:
+                cancelled_out += 1
+                kind, detail = "skip", "已停止，跳过"
             except SystemExit as e:  # _edit 缺 key 时 sys.exit
                 errors.append(job[0].name)
                 kind, detail = "fail", str(e)
@@ -837,6 +875,8 @@ def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress
             if progress:
                 progress(job[0].name, kind, detail)
                 progress(None, "count", f"{done}/{total}")
+    if cancelled_out:
+        raise Cancelled(f"已按你的要求中止（完成 {done - cancelled_out}/{total} 张，跳过 {cancelled_out} 张；已生成的都保留在墙上了）")
     return {"errors": errors, "total": total, "cost": sticker.total_cost(p)}
 
 
@@ -850,6 +890,7 @@ def build_pack(sticker, pack_dir, progress=None):
     bg = pack.get("background", "transparent")
     rows = []
     for i, s in enumerate(pack["stickers"], 1):
+        check_cancel(f"合成到第 {i} 张")
         sheet = p / "sheets" / f"{i:02d}.png"
         if not sheet.exists():
             if progress:
