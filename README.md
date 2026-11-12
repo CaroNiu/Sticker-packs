@@ -14,6 +14,15 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
+**这是用它做出来的成品（真实项目输出，非宣传图）：**
+
+<table><tr>
+<td><img src="docs/demo/01.gif" width="200" alt="成品动图示例 1"/></td>
+<td><img src="docs/demo/04.gif" width="200" alt="成品动图示例 2"/></td>
+</tr>
+<tr><td align="center">240×240 · 微信投稿规格 · 自动切帧合成</td><td align="center">照片转卡通形象 · 全程同一角色</td></tr>
+</table>
+
 </div>
 
 ---
