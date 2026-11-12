@@ -402,7 +402,14 @@ def _chat_once(base, key, model, system, user, max_tokens, timeout):
     return msg.get("content") or msg.get("reasoning_content") or ""
 
 
-def _chat(base, key, model, system, user, max_tokens=3000, timeout=180):
+def _chat(base, key, model, system, user, max_tokens=3000, timeout=180, net_retries=3):
+    """对话补全 + 有限重试。
+
+    HTTP 429/5xx 重试 3 次（服务端限流/抖动，重试通常有效）；
+    网络超时/连接错误重试 net_retries 次（超时大概率是模型太慢或网络挂，
+    盲目重试只会拖长等待，所以创意这类快任务传 net_retries=1）。
+    每次重试都打日志——静默重试会让用户以为程序卡死。
+    """
     last = None
     for attempt in range(4):
         try:
@@ -416,10 +423,16 @@ def _chat(base, key, model, system, user, max_tokens=3000, timeout=180):
                 continue
             hint = "（鉴权失败：检查文案模型的 API Key）" if e.code in (401, 403) else ""
             raise RuntimeError(f"HTTP {e.code}: {msg}{hint}") from None
-        except (urllib.error.URLError, TimeoutError) as e:
-            if attempt == 3:
-                raise RuntimeError(str(e)) from None
-            time.sleep(5 * (attempt + 1))
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt >= net_retries:
+                raise RuntimeError(
+                    f"文案请求失败（已重试 {attempt} 次）：{e}\n"
+                    f"提示：思考型模型（DeepSeek-R1/GLM 思考模式等）响应慢，"
+                    f"可在设置换非思考模型，或再点一次重试") from None
+            wait = 5 * (attempt + 1)
+            api_log(f"⚠ 文案请求网络异常（{type(e).__name__}）→ {wait}s 后重试"
+                    f"（第 {attempt + 1}/{net_retries} 次）")
+            time.sleep(wait)
             last = e
     raise RuntimeError(str(last))
 
@@ -644,7 +657,9 @@ def ai_ideas(cfg, topic=""):
     if not (key and model):
         raise ValueError("文案模型没配全：需要模型名和 API Key（接口地址留空 = OpenAI 官方，设置里第二组）")
     user = f"主题方向（可空）：{topic or '不限，给出当下最容易被转发使用的抽象表情创意'}"
-    text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=6000, timeout=120)
+    # 思考型文案模型出 12 条创意常超 2 分钟，超时给足；网络重试只 1 次，
+    # 否则慢模型 × 盲目重试会让用户对着「正在出创意」等上十几分钟
+    text = _chat(base, key, model, IDEAS_SYSTEM, user, max_tokens=6000, timeout=300, net_retries=1)
     try:
         arr = _extract_json_array(text)
     except Exception:
@@ -652,7 +667,7 @@ def ai_ideas(cfg, topic=""):
         user2 = user + ("\n\n⚠ 你上一次的输出解析失败（可能输出了思考过程，或 JSON 被截断）。"
                         "这次必须直接输出一个 JSON 数组，从 [ 开始到 ] 结束，"
                         "不要思考过程、不要解释、不要任何多余文字，12 条尽量精炼。")
-        text2 = _chat(base, key, model, IDEAS_SYSTEM, user2, max_tokens=6000, timeout=120)
+        text2 = _chat(base, key, model, IDEAS_SYSTEM, user2, max_tokens=6000, timeout=300, net_retries=1)
         try:
             arr = _extract_json_array(text2)
         except Exception:

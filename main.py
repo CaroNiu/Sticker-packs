@@ -660,15 +660,31 @@ class IdeasDialog(QDialog):
 
     def _go(self):
         self.btn_go.setEnabled(False)
-        self.lbl_state.setText("AI 正在出创意…（一般 10–30 秒）")
+        self._t0 = time.time()
+        if not hasattr(self, "_tick"):
+            self._tick = QTimer(self)
+            self._tick.timeout.connect(self._tick_elapsed)
+        self._tick.start(1000)
+        self._tick_elapsed()
         self.worker = Worker(core.ai_ideas, self.main.cfg, self.ed_topic.text().strip())
         self.worker.done.connect(self._on_ideas)
         self.worker.failed.connect(self._on_ideas_fail)
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
+    def _tick_elapsed(self):
+        sec = int(time.time() - self._t0)
+        tip = "思考型模型（DeepSeek-R1 等）可能要 1–5 分钟，请耐心等；控制台有实时日志"
+        if sec < 45:
+            self.lbl_state.setText(f"AI 正在出创意…（已 {sec} 秒）")
+        else:
+            self.lbl_state.setText(f"AI 正在出创意…（已 {sec} 秒）——{tip}")
+
     def _on_ideas(self, ideas):
         self.btn_go.setEnabled(True)
+        if hasattr(self, "_tick"):
+            self._tick.stop()
+        sec = int(time.time() - self._t0)
         self.tbl.setRowCount(0)
         for i, it in enumerate(ideas):
             r = self.tbl.rowCount()
@@ -678,10 +694,12 @@ class IdeasDialog(QDialog):
             self.tbl.setItem(r, 0, chk)
             self.tbl.setItem(r, 1, QTableWidgetItem(it["word"]))
             self.tbl.setItem(r, 2, QTableWidgetItem(f"{it['scene']}（{it['why']}）"))
-        self.lbl_state.setText(f"共 {len(ideas)} 条，默认勾前 4 条。选好后点右下按钮填入灵感提示。")
+        self.lbl_state.setText(f"共 {len(ideas)} 条，用时 {sec} 秒。选好后点右下按钮填入灵感提示。")
 
     def _on_ideas_fail(self, msg):
         self.btn_go.setEnabled(True)
+        if hasattr(self, "_tick"):
+            self._tick.stop()
         self.lbl_state.setText(f"❌ {msg}")
 
     def _fill(self):

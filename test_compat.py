@@ -45,7 +45,7 @@ def _fake_copy(base, key, model, system, user, max_tokens=3000, timeout=180):
     return json.dumps(COPY_OBJ, ensure_ascii=False)
 
 
-def _fake_ideas(base, key, model, system, user, max_tokens=3000, timeout=180):
+def _fake_ideas(base, key, model, system, user, max_tokens=3000, timeout=180, net_retries=3):
     calls.append(base)
     return json.dumps(IDEAS_ARR, ensure_ascii=False)
 

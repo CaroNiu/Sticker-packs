@@ -20,7 +20,7 @@ IDEAS = [{"word": w, "scene": f"场景{w}", "why": f"理由{w}"} for w in WORDS]
 
 
 def _fake_chat(responses, calls):
-    def fake(base, key, model, system, user, max_tokens=3000, timeout=120):
+    def fake(base, key, model, system, user, max_tokens=3000, timeout=120, net_retries=3):
         calls.append({"user": user, "max_tokens": max_tokens})
         return responses[min(len(calls), len(responses)) - 1]
     return fake
