@@ -9,7 +9,7 @@
 不用敲命令行——上传照片生成卡通形象，AI 写好整套文案，逐张生成动图，
 合成 GIF、跑微信规范检查、打出投稿包，全程图形界面点一点。
 
-[![Release](https://img.shields.io/github/v/release/CaroNiu/Sticker-packs?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/CaroNiu/Sticker-packs/releases/latest)
+[![Release](https://img.shields.io/github/v/release/CaroNiu/StickerWorkshop?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/CaroNiu/StickerWorkshop/releases/latest)
 [![Platform](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20%7C%20macOS-blue)](#-下载安装)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
@@ -62,7 +62,7 @@
 
 ### 方式一：直接下载（推荐，开箱即用）
 
-到 [**Releases**](https://github.com/CaroNiu/Sticker-packs/releases/latest) 下载对应平台：
+到 [**Releases**](https://github.com/CaroNiu/StickerWorkshop/releases/latest) 下载对应平台：
 
 | 文件 | 平台 | 用法 |
 |---|---|---|
@@ -79,8 +79,8 @@ macOS 的数据在 `~/Library/Application Support/StickerWorkshop/`。
 ### 方式二：源码运行
 
 ```bash
-git clone https://github.com/CaroNiu/Sticker-packs.git
-cd Sticker-packs
+git clone https://github.com/CaroNiu/StickerWorkshop.git
+cd StickerWorkshop
 pip install -r requirements.txt   # PySide6 + Pillow
 python setup_skill.py             # 一键拉取上游 skill 脚本副本（仅首次，见下方说明）
 python main.py
