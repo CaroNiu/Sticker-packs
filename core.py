@@ -883,9 +883,15 @@ def _gen_pack_impl(sticker, cfg, pack_dir, with_assets=True, redo=None, progress
     jobs = sticker._jobs(p, pack, cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
                          cfg.get("quality", "medium"), with_assets, redo_set)
     # 跳过判据：不存在 或 早于角色图（旧角色时代的精灵图/配套素材）→ 重做。
-    # redo 编号由 skill 的 _jobs 负责 unlink；素材不受 redo 影响、纯按新旧判据走。
+    # 注意 skill 的 _gen_one 内部还有一道「存在即跳过」——陈旧目标必须先删掉
+    # 旧文件再交给它，否则它自己又判「跳过（已有）」，重做永远不发生。
     rm = _ref_mtime(pack_dir)
-    todo = [j for j in jobs if _need_gen(j[0], rm)]
+    todo = []
+    for j in jobs:
+        if _need_gen(j[0], rm):
+            if j[0].exists():
+                j[0].unlink()
+            todo.append(j)
     total, done, errors = len(todo), 0, []
     if progress:
         progress(None, "total", str(total))
