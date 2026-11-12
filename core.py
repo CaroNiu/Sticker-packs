@@ -772,6 +772,104 @@ def check_cancel(where=""):
         raise Cancelled(f"已按你的要求中止{('（' + where + '）') if where else ''}")
 
 
+# ---------- 即兴模式（参考图 + 一句话想法 → 单张表情 GIF，不建项目） ----------
+
+QUICK_SYSTEM = (
+    "把用户的一句话想法解析成一个微信表情包选题。只输出 JSON："
+    '{"word":"含义词，1-4个汉字，无标点","caption":"配字，默认与word相同，可加语气字","action":"英文动作描述，2-3个连贯身体动作，'
+    '表情夸张、小尺寸下可读，最后一帧能流畅循环回第一帧"}'
+    "不要 markdown 围栏、不要解释。想法模糊或太短时，自由发挥成当下最有传播力的抽象梗；"
+    "想法里已经指明情绪/动作时严格照做。"
+)
+
+
+def parse_quick_idea(cfg, idea):
+    """文案模型把一句话想法解析成 {word, caption, action}。"""
+    base = (cfg.get("text_base_url") or cfg.get("base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
+    key = cfg.get("text_api_key") or cfg.get("api_key") or ""
+    model = cfg.get("text_model") or ""
+    if not (key and model):
+        raise ValueError("文案模型没配全：设置 → 「文案对话模型」填模型名和 API Key")
+    user = f"用户想法：{idea.strip() or '自由发挥，出当下最有传播力的抽象梗表情'}"
+    text = _chat(base, key, model, QUICK_SYSTEM, user, max_tokens=2000, timeout=300, net_retries=1)
+    try:
+        data = _extract_json(text)
+    except Exception:
+        text2 = _chat(base, key, model, QUICK_SYSTEM,
+                      user + "\n\n⚠ 上次输出解析失败。这次只输出 JSON 对象，从 { 开始到 } 结束。",
+                      max_tokens=2000, timeout=300, net_retries=1)
+        try:
+            data = _extract_json(text2)
+        except Exception:
+            raise ValueError(f"想法解析失败（已重试 1 次）。输出开头：{text2[:120]}")
+    if not isinstance(data, dict):
+        raise ValueError("想法解析结果不是对象")
+    word = re.sub(r"[\s，。！？、,.!?/\\:\"'*<>|]", "", str(data.get("word", "")).strip())[:4]
+    caption = str(data.get("caption", "")).strip() or word
+    action = str(data.get("action", "")).strip()
+    if not word or not action:
+        raise ValueError(f"解析结果缺词或动作：{str(data)[:120]}")
+    return {"word": word, "caption": caption, "action": action}
+
+
+QUICK_SHEET_PROMPT = (
+    "Use the character in the input image exactly: same face, body shape, colors, clothing and line style. "
+    "Draw a 4x4 animation sprite sheet of one short looping chat-sticker animation: 16 equal square cells, "
+    "read left to right, top to bottom, each cell is the next frame. "
+    "No grid lines, no borders, no cell numbers, fully transparent background. "
+    "Same character size and same ground position in every cell, keep everything fully inside its cell with margin. "
+    "Exaggerated, readable facial expression at small size. All shapes solid and crisp: no motion blur, no dust clouds, "
+    "no semi-transparent effects. The last frame must flow smoothly back to the first. "
+    "Action: {action}. "
+    'Add one big bold hand-lettered caption at the bottom of every cell, identical in every frame, '
+    'reading exactly: "{caption}". Give the caption and the character a clean thick white sticker outline. No other text.'
+)
+
+
+def quick_sticker(sticker, cfg, ref_image, idea, frame_ms=120, progress=None):
+    """即兴模式：参考图 + 一句话想法 → 单张表情 GIF。不建项目、不入 packs/。
+
+    ① 文案模型解析想法 → {word, caption, action}
+    ② 图片模型按参考图生成 16 帧精灵图（走方舟/兼容自动分发）
+    ③ skill 的 build_gif 切帧合成 → <packs 同级>/quick/日期-时刻-词.gif
+    progress(item, kind, msg)：与 gen_pack 同款三参签名，item 恒为 None；
+    kind ∈ parse/done-parse/gen/done-gen/done。
+    """
+    def report(kind, msg):
+        if progress:
+            progress(None, kind, msg)
+
+    check_cancel("开始前")
+    report("parse", "解析想法…")
+    parsed = parse_quick_idea(cfg, idea)
+    check_cancel("想法解析后")
+    report("done-parse", f"选题：{parsed['word']}")
+
+    out_dir = PROJECT_ROOT / "quick"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sheet_dir = out_dir / "sheets"
+    sheet_dir.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M")
+    sheet = sheet_dir / f"{stamp}-{parsed['word']}.png"
+    gif = out_dir / f"{stamp}-{parsed['word']}.gif"
+
+    with env_patch(cfg):
+        check_cancel("图片生成前")
+        report("gen", f"生成精灵图（参考图 {Path(ref_image).name}，约 1-2 分钟）…")
+        png = sticker._edit(
+            str(ref_image), QUICK_SHEET_PROMPT.format(**parsed), "1024x1024", "transparent",
+            cfg.get("gen_model", DEFAULT_CONFIG["gen_model"]),
+            cfg.get("quality", "medium"),
+            out_dir / "costs.jsonl",
+        )
+        sheet.write_bytes(png)
+        check_cancel("合成前")
+        report("done-gen", "精灵图完成，切帧合成…")
+        size, colors, n, border = sticker.build_gif(sheet, gif, frame_ms, "transparent")
+    report("done", f"{gif.name}（{size // 1024}KB {n}帧）")
+    return {"gif": str(gif), "sheet": str(sheet), "kb": size // 1024, "frames": n, **parsed}
+
+
 def make_character(sticker, cfg, photo, out_path, style, desc=""):
     """照片 → 卡通角色图。
 

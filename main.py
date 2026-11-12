@@ -796,6 +796,164 @@ class IdeasDialog(QDialog):
         self.main.ai_copy()    # 直接触发 AI 生成整套文案，省一次手动点击
 
 
+class QuickDialog(QDialog):
+    """⚡ 即兴模式：参考图 + 一句话想法 → 单张表情 GIF。
+
+    与四步套图流水线互补：不建项目、不写整套文案，给一张图和一个念头，
+    60-120 秒直接出一个能发的表情动图。输出在 quick/ 目录，不碰 packs/。
+    """
+
+    def __init__(self, main):
+        super().__init__(main)
+        self.main = main
+        self.setWindowTitle("⚡ 即兴生成（参考图 + 想法 → 单张表情）")
+        self.resize(760, 560)
+        v = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self.drop = DropLabel()
+        self.drop.setMinimumHeight(150)
+        self.drop.setMinimumWidth(260)
+        self.drop.pathSelected.connect(lambda p: self.lbl_ref.setText(p))
+        top.addWidget(self.drop, 2)
+
+        side = QVBoxLayout()
+        btn_pick = QPushButton("浏览参考图…")
+        btn_pick.clicked.connect(self._pick_ref)
+        side.addWidget(btn_pick)
+        # 当前项目角色图快捷入口（已打开项目且角色图在时可用）
+        ch = (main.pack_dir / "character.png") if main.pack_dir else None
+        self.btn_use_char = QPushButton("用当前项目角色图")
+        self.btn_use_char.setEnabled(bool(ch and ch.exists()))
+        self.btn_use_char.setToolTip("即兴生成的成品与项目角色同款形象")
+        self.btn_use_char.clicked.connect(
+            lambda: self.drop.set_photo(str(main.pack_dir / "character.png")))
+        side.addWidget(self.btn_use_char)
+        self.lbl_ref = QLineEdit()
+        self.lbl_ref.setReadOnly(True)
+        self.lbl_ref.setPlaceholderText("未选择参考图（角色图 / 宠物照 / 任意形象图都行）")
+        side.addWidget(self.lbl_ref)
+        side.addStretch(1)
+        top.addLayout(side, 1)
+        v.addLayout(top)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("想法（一句话）："))
+        self.ed_idea = QLineEdit()
+        self.ed_idea.setPlaceholderText(
+            "如「翻白眼说就这」「捂脸笑到拍桌」「听我说谢谢」；留空 = AI 自由发挥抽象梗")
+        row.addWidget(self.ed_idea, 1)
+        self.btn_go = QPushButton("⚡ 生成")
+        self.btn_go.setProperty("primary", True)
+        self.btn_go.clicked.connect(self._go)
+        row.addWidget(self.btn_go)
+        self.btn_stop = QPushButton("⛔")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setToolTip("中止即兴生成")
+        self.btn_stop.clicked.connect(self._stop)
+        row.addWidget(self.btn_stop)
+        v.addLayout(row)
+
+        self.lbl_state = QLabel(
+            "生成结果保存在 quick/ 目录（文件名带选题词），不占用任何项目。\n"
+            "流程：AI 解析想法（10–30 秒）→ 生成 16 帧精灵图（1–2 分钟）→ 自动合成 GIF。")
+        self.lbl_state.setWordWrap(True)
+        v.addWidget(self.lbl_state)
+
+        self.preview = QLabel("生成的 GIF 在这里预览")
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumSize(240, 240)
+        self.preview.setStyleSheet(
+            f"QLabel{{border: 1px solid {theme.CARD_BORDER}; border-radius: 12px;"
+            f"background: {theme.CARD_BG}; color: #B3ADA1;}}")
+        v.addWidget(self.preview, 1)
+
+        foot = QHBoxLayout()
+        self.api_panel = ApiLogPanel()
+        v.addWidget(self.api_panel)
+        self.main.register_api_panel(self.api_panel)
+        btn_dir = QPushButton("打开 quick 目录")
+        btn_dir.clicked.connect(lambda: self.main._open_path(
+            str(core.PROJECT_ROOT / "quick")))
+        foot.addWidget(btn_dir)
+        foot.addStretch(1)
+        btn_close = QPushButton("完成")
+        btn_close.clicked.connect(self.accept)
+        foot.addWidget(btn_close)
+        v.addLayout(foot)
+        self._movie = None
+
+    def _pick_ref(self):
+        p, _ = QFileDialog.getOpenFileName(self, "选择参考图", "", "图片 (*.jpg *.jpeg *.png *.webp)")
+        if p:
+            self.drop.set_photo(p)
+
+    def _go(self):
+        ref = self.drop.photo()
+        if not ref:
+            QMessageBox.warning(self, "缺参考图", "先拖入或选择一张参考图（角色图/照片都行）。")
+            return
+        if self.main.sticker is None:
+            # 即兴模式不依赖打开项目：程序刚启动也能直接用
+            self.main.sticker = core.load_sticker(self.main.cfg.get("skill_dir", core.DEFAULT_SKILL_DIR))
+        self.btn_go.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.lbl_state.setText("⏳ 解析想法…")
+        self._preview_clear()
+        self.worker = Worker(core.quick_sticker, self.main.sticker, self.main.cfg, ref,
+                             self.ed_idea.text().strip(), 120, with_progress=True)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.done.connect(self._on_done)
+        self.worker.failed.connect(self._on_fail)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.start()
+
+    def _stop(self):
+        core.request_cancel()
+        self.btn_stop.setEnabled(False)
+        self.lbl_state.setText("正在中止…")
+
+    def _on_progress(self, item, kind, msg):
+        self.lbl_state.setText(f"⏳ {msg}" if kind != "done-parse" else f"✅ {msg}")
+
+    def _on_done(self, r):
+        self.btn_go.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.lbl_state.setText(
+            f"✅ 完成：{r['word']}（{r['caption']}）· {r['kb']}KB {r['frames']}帧 · 已存 quick/ 目录")
+        mov = QMovie(r["gif"])
+        mov.setScaledSize(QSize(240, 240))
+        self.preview.setMovie(mov)
+        mov.start()
+        self._movie = mov  # 防 GC
+
+    def _on_fail(self, msg):
+        self.btn_go.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.lbl_state.setText(f"❌ {msg[:180]}")
+
+    def _preview_clear(self):
+        self.preview.setMovie(None)
+        self.preview.setText("生成中…")
+        self._movie = None
+
+    def done(self, r):
+        self.main.unregister_api_panel(self.api_panel)
+        w = getattr(self, "worker", None)
+        if w is not None:
+            try:
+                running = w.isRunning()
+            except RuntimeError:
+                running = False
+            if running:
+                try:
+                    w.done.disconnect(self._on_done)
+                    w.failed.disconnect(self._on_fail)
+                except (TypeError, RuntimeError):
+                    pass
+        super().done(r)
+
+
 class MainWindow(QMainWindow):
     api_line = Signal(str)   # core 线程里的日志 → UI 线程
 
@@ -935,6 +1093,8 @@ class MainWindow(QMainWindow):
         self.m_recent = m_file.addMenu("最近项目")
         self._rebuild_recent_menu()
         m_file.addSeparator()
+        act_quick = m_file.addAction("⚡ 即兴生成（单张）…")
+        act_quick.triggered.connect(self._open_quick)
         act_albums = m_file.addAction("专辑管理器…")
         act_albums.triggered.connect(self._open_albums)
         act_quit = m_file.addAction("退出")
@@ -1875,6 +2035,9 @@ class MainWindow(QMainWindow):
 
     def _open_ideas(self):
         IdeasDialog(self).exec()
+
+    def _open_quick(self):
+        QuickDialog(self).exec()
 
     def load_project(self, p):
         self.pack_dir = Path(p)
