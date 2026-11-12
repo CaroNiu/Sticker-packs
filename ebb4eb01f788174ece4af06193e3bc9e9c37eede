@@ -1,0 +1,31 @@
+main.py
+  8e123a7cd26f9c2d 230-233,705-706,795-796,1051,1059-1062,1174-1176,1241-1243,1311-1315,1317,1319-1320,1324,1387-1391
+setup_skill.py
+  8e123a7cd26f9c2d 1-68
+build_exe.py
+  8e123a7cd26f9c2d 72-77,80-84
+core.py
+  8e123a7cd26f9c2d 361-362
+README.md
+  8e123a7cd26f9c2d 51,61-63,73,77-80,82-88,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "ebb4eb01f788174ece4af06193e3bc9e9c37eede",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 6543,
+      "total_deletions": 6433,
+      "accepted_lines": 3807,
+      "overriden_lines": 1
+    }
+  }
+}
