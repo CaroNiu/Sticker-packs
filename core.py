@@ -980,8 +980,18 @@ def _skeleton_pack(name, style, frame_ms=120, background="transparent"):
     }
 
 
-def new_project(cfg, name):
+def new_project(cfg, name, clean=False):
+    """新建项目。同名目录里残留的旧项目产物（角色图/精灵图/投稿包等）会让
+    「已生成的自动跳过」沿用旧图，造成新旧形象混在一套里——所以默认拒绝、
+    clean=True 时清空旧产物再建（UI 层先向用户确认，清空不可恢复）。
+    """
     p = Path(cfg["packs_dir"]) / name
+    if p.exists() and project_has_artifacts(p):
+        if not clean:
+            raise FileExistsError(
+                f"{p} 已有旧项目数据（角色图/精灵图等）。"
+                "要清空重建请在确认框里选「清空重建」，或换个项目名。")
+        clean_project_artifacts(p)
     p.mkdir(parents=True, exist_ok=True)
     pack = _skeleton_pack(name, cfg.get("style", DEFAULT_CONFIG["style"]),
                           cfg.get("frame_ms", 120), cfg.get("background", "transparent"))
@@ -992,6 +1002,26 @@ def new_project(cfg, name):
 # ---------- 专辑（系列）模式 ----------
 
 ALBUM_FILE = "album.json"
+
+# 项目产物清单：新建项目同名残留时清这些（pack.json 之外的所有已知产物）
+PROJECT_ARTIFACTS = ("character.png", "character_desc.tmp", "sheets", "assets_raw",
+                     "submit", "costs.jsonl", "预览.png", "预览.html", "上架文案.md",
+                     "交付给客户.zip")
+
+
+def project_has_artifacts(p):
+    return any((Path(p) / a).exists() for a in PROJECT_ARTIFACTS)
+
+
+def clean_project_artifacts(p):
+    """清空项目产物（不可恢复；pack.json 由调用方随后重写）。"""
+    p = Path(p)
+    for a in PROJECT_ARTIFACTS:
+        t = p / a
+        if t.is_dir():
+            shutil.rmtree(t, ignore_errors=True)
+        elif t.exists():
+            t.unlink()
 BAD_DIR_CHARS = '/\\:*?"<>|'
 
 

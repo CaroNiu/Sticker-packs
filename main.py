@@ -1834,6 +1834,26 @@ class MainWindow(QMainWindow):
             return
         try:
             p = core.new_project(self.cfg, name)
+        except FileExistsError:
+            # 同名目录残留旧项目数据：不清空会被「跳过已有」沿用旧图，新旧形象混套
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("目录已有旧项目")
+            box.setText(f"「{name}」目录里已有旧项目的角色图/精灵图等数据。\n"
+                        "新建会把它们清空（不可恢复），保证新项目从零开始；"
+                        "想保留旧项目请换个名字。")
+            rwipe = QPushButton("清空重建（推荐）")
+            rcancel = QPushButton("取消")
+            box.addButton(rwipe, QMessageBox.YesRole)
+            box.addButton(rcancel, QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is not rwipe:
+                return
+            try:
+                p = core.new_project(self.cfg, name, clean=True)
+            except OSError as e:
+                QMessageBox.critical(self, "清空失败", str(e))
+                return
         except OSError as e:
             QMessageBox.critical(self, "创建失败", str(e))
             return
