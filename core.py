@@ -791,6 +791,24 @@ def make_character(sticker, cfg, photo, out_path, style, desc=""):
     return {"out": str(out_path), "log": f"角色图已生成：{out_path.name}（情绪原型提示词版）"}
 
 
+def stale_sheets(pack_dir):
+    """精灵图 mtime 早于角色图 mtime 的编号列表——它们是旧角色画的。
+
+    「已生成的自动跳过」的断点续跑机制在这里会坑人：换了角色图/重写文案后
+    开始生成，旧图全部被跳过，新旧形象混在一套里。返回如 ["1","3"] 供 UI 提示。
+    """
+    p = Path(pack_dir)
+    ch = p / "character.png"
+    if not ch.exists():
+        return []
+    t0 = ch.stat().st_mtime
+    out = []
+    for f in sorted((p / "sheets").glob("*.png")):
+        if f.stem.isdigit() and f.stat().st_mtime < t0:
+            out.append(str(int(f.stem)))
+    return out
+
+
 def dry_run(sticker, cfg, pack_dir, with_assets=True):
     """只数要生成几张、估花费，不调 API。角色图缺失时 sys.exit 由调用方接。"""
     p, pack = sticker.load_pack(str(pack_dir))

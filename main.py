@@ -1517,13 +1517,34 @@ class MainWindow(QMainWindow):
         if not (self.pack_dir / "character.png").exists():
             QMessageBox.warning(self, "缺角色图", "请先在第 1 步生成角色图。")
             return
-        self.gen_log.clear()
-        self.gen_done = 0
-        self.gen_total = 0
-        self.bar.setRange(0, 1)
-        self.bar.setValue(0)
-        self.lbl_gen_stat.setText("⏳ 提交中…")
         redo = [x.strip() for x in self.ed_redo.text().replace("，", ",").split(",") if x.strip()]
+        # 陈旧检测：精灵图比角色图老的（旧角色画的）会被「跳过已有」逻辑放过，
+        # 导致新旧形象混在一套里——换过角色图/重写过文案后尤其常见
+        stale = core.stale_sheets(self.pack_dir)
+        if stale:
+            covered = {int(x) for x in redo if x.isdigit()}
+            todo = [s for s in stale if int(s) not in covered]
+            if todo:
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Warning)
+                box.setWindowTitle("检测到旧角色时代的图")
+                box.setText(
+                    f"角色图是新生成的，但这 {len(stale)} 张精灵图比它更早："
+                    + "、".join(todo[:12]) + ("…" if len(todo) > 12 else "")
+                    + "\n它们是旧角色画的。直接开始会「跳过已有」，新旧形象混在一套里！")
+                rredo = QPushButton("重抽这些旧图（推荐）")
+                rkeep = QPushButton("按原计划（跳过旧图）")
+                rcancel = QPushButton("取消")
+                box.addButton(rredo, QMessageBox.YesRole)
+                box.addButton(rkeep, QMessageBox.NoRole)
+                box.addButton(rcancel, QMessageBox.RejectRole)
+                box.exec()
+                if box.clickedButton() is rcancel:
+                    return
+                if box.clickedButton() is rredo:
+                    redo = sorted(set(redo + todo), key=int)
+                    self.ed_redo.setText(",".join(redo))
+        self.gen_log.clear()
         self._run("生成中…", core.gen_pack, self.sticker, self.cfg, self.pack_dir,
                   self.cb_assets.isChecked(), redo, step=2,
                   with_progress=True, progress_slot=self._on_gen_progress,
