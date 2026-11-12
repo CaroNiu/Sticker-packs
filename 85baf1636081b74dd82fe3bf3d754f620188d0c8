@@ -1,0 +1,23 @@
+main.py
+  8e123a7cd26f9c2d 26-27,29-40,43-66,1058-1060,1119,1192-1193,1311,1329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "85baf1636081b74dd82fe3bf3d754f620188d0c8",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 3831,
+      "total_deletions": 3798,
+      "accepted_lines": 2412,
+      "overriden_lines": 0
+    }
+  }
+}
