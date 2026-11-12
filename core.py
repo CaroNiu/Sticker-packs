@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "text_base_url": "",
     "text_model": "gpt-4o-mini",
     "jobs": 4,
-    "style": "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
+    "style": "meme-style cartoon, oversized expressive head, tiny simple body, thick clean outlines, flat colors, smug cheeky default face",
     "frame_ms": 120,
     "background": "transparent",
     "recent_projects": [],
@@ -503,7 +503,7 @@ def ai_copywriting(cfg, hint="", style=""):
     model = cfg.get("text_model") or ""
     if not (key and model):
         raise ValueError("文案模型没配全：设置 → 「文案对话模型」填 API Key 和模型名（接口地址留空 = OpenAI 官方）")
-    user = f"角色设定/画风：{style or '可爱Q版'}"
+    user = f"角色设定/画风：{style or '抽象梗系表情包角色（大头、默认表情自带态度）'}"
     if hint:
         user += f"\n策划灵感提示：{hint}"
     user += "\n请按系统规则产出整套文案 JSON。"
@@ -700,17 +700,45 @@ def ai_ideas(cfg, topic=""):
 
 # ---------- 操作（都在 worker 线程里跑）----------
 
-def make_character(sticker, cfg, photo, out_path, style):
-    """照片 → 卡通角色图。复用 skill 的提示词和计费逻辑。"""
-    ns = argparse.Namespace(
-        photo=str(photo), out=str(out_path), style=style,
-        model=cfg.get("character_model", DEFAULT_CONFIG["character_model"]),
-        quality=cfg.get("quality", "medium"),
+def character_prompt(style):
+    """第①步角色图提示词：熊猫头式「情绪原型」视觉公式。
+
+    skill 的 cmd_character 写死 cute 全身像——萌则萌矣，但没有传播攻击性。
+    表情包的半条命在角色本身：头占比要大（表情是唯一信息载体，脸小了情绪就稀），
+    默认表情自带态度（谜之自信/不屑/无赖感——熊猫头的脸底色就是贱，不是友好微笑）。
+    这张基准脸会经「same face」传导到全套每张精灵图，所以态度必须从第一步定调。
+    """
+    return (
+        "Turn the subject of this photo into an original, heavily stylized meme-style cartoon sticker character "
+        "(think the attitude of classic meme-face characters, do not copy any existing one). "
+        "The BIG head with an oversized expressive face is the hero: the face alone must carry the whole emotion. "
+        "Tiny simplified body, or head-and-shoulders only, is fine. "
+        "The default expression comes with ATTITUDE: smug, cheeky, a little unimpressed, "
+        "half-smirking — NOT a friendly smile, NOT cute-for-cute's-sake. "
+        f"Art style: {style}. "
+        "Keep the identifying features (hairstyle, glasses, markings, signature clothing or fur pattern). "
+        "It must clearly read as a drawing, never photorealistic. Front-facing, centered, "
+        "fully transparent background, no text, no border."
     )
-    buf = io.StringIO()
-    with env_patch(cfg), contextlib.redirect_stdout(buf):
-        sticker.cmd_character(ns)
-    return {"out": str(out_path), "log": buf.getvalue()}
+
+
+def make_character(sticker, cfg, photo, out_path, style):
+    """照片 → 卡通角色图。
+
+    提示词用 core 的「情绪原型」版（skill 写死 cute 全身像，萌但没攻击性）；
+    图片接口路由（方舟/兼容分发）、计费日志 costs.jsonl 仍全部走 skill 底层。
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with env_patch(cfg):
+        png = sticker._edit(
+            str(photo), character_prompt(style), "1024x1024", "transparent",
+            cfg.get("character_model", DEFAULT_CONFIG["character_model"]),
+            cfg.get("quality", "medium"),
+            out_path.parent / "costs.jsonl",
+        )
+    out_path.write_bytes(png)
+    return {"out": str(out_path), "log": f"角色图已生成：{out_path.name}（情绪原型提示词版）"}
 
 
 def dry_run(sticker, cfg, pack_dir, with_assets=True):

@@ -24,6 +24,8 @@ import theme
 from theme import apply_theme
 
 STYLES = [
+    # 默认首位：熊猫头式情绪原型（大头、表情浓度、自带态度的脸）
+    "meme-style cartoon, oversized expressive head, tiny simple body, thick clean outlines, flat colors, smug cheeky default face",
     "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
     "thick clean dark outlines, flat colors",
     "hand-drawn crayon doodle style, grainy texture",
@@ -1024,6 +1026,9 @@ class MainWindow(QMainWindow):
         self.cb_char_style.setEditable(True)
         self.cb_char_style.addItems(STYLES)
         self.cb_char_style.setCurrentText(self.cfg.get("style", STYLES[0]))
+        self.cb_char_style.setToolTip(
+            "默认第一项是「熊猫头式情绪原型」：大头、表情浓度拉满、自带态度的脸。\n"
+            "这张基准脸会传导到全套每张表情——想要温和治愈风就换可爱 Q 版。")
         form.addRow("角色风格", self.cb_char_style)
         side.addLayout(form)
         self.btn_char = QPushButton("生成角色图")
