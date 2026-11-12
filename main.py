@@ -1901,6 +1901,16 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     apply_theme(app)
+    # 源码运行（python main.py）时 Windows 任务栏默认显示 python.exe 的蛇标
+    # （打包 exe 无此问题，它有自己的图标资源）。给进程设独立 AppUserModelID
+    # 后，Windows 把它当独立应用分组，任务栏条目改用 Qt 窗口图标渲染。
+    # 必须在第一个窗口 show 之前设置。
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CaroNiu.StickerWorkshop")
+        except Exception:
+            pass  # 失败只是回退成 python 图标，不影响功能
     app.setWindowIcon(theme.app_icon())  # 标题栏/任务栏图标，对话框自动继承
     win = MainWindow()
     win.show()
