@@ -1,0 +1,23 @@
+README.md
+  8e123a7cd26f9c2d 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "9f1e3aa101e237ffa223da72a92ddfcc9597503f",
+  "prompts": {
+    "8e123a7cd26f9c2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d533e3a9-7b77-4d89-b810-5150eb7ccc9f",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "Caro_Niu",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 5,
+      "accepted_lines": 750,
+      "overriden_lines": 0
+    }
+  }
+}
