@@ -1,0 +1,21 @@
+name: 💡 功能建议
+description: 提出新功能想法或改进建议
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: scene
+    attributes:
+      label: 你想解决什么问题 / 什么场景
+      placeholder: "如：想给自家宠物批量出一套表情，但照片质量参差……"
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 期望的做法（可选）
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: 愿意参与吗
+      options:
+        - label: 愿意试用早期版本并反馈

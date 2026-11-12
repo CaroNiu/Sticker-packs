@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题先看 README / 使用说明
+    url: https://github.com/CaroNiu/Sticker-packs#readme
+    about: FAQ 与四步流程说明；程序内「帮助 → 使用说明」也有

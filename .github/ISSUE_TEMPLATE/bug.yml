@@ -1,0 +1,49 @@
+name: 🐛 问题反馈
+description: 报告使用中遇到的问题（生成失败、界面异常、崩溃等）
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 感谢反馈！请尽量填全下面的信息，问题才能被复现和修复。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Windows（下载的 exe）
+        - macOS Apple Silicon（下载的 zip）
+        - macOS Intel（下载的 zip）
+        - 源码运行
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: 出问题的环节
+      options:
+        - ① 定角色（角色图生成）
+        - ② 写文案（AI 文案 / 创意参谋）
+        - ⚡ 即兴生成（单张）
+        - ③ 生成（精灵图 / 素材）
+        - ④ 合成 / 检查 / 投稿包
+        - 安装 / 启动
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: model
+    attributes:
+      label: 使用的模型服务（如已配置）
+      placeholder: "如：火山方舟 doubao-seedream-5.0-pro + GLM 文案 / OpenAI gpt-image-1 / 中转网关…"
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      placeholder: 期望 vs 实际；控制台「显示后台调用日志」里的报错请一并粘贴
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志/截图
+      placeholder: 拖图粘贴即可；注意涂抹 API Key
