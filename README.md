@@ -48,7 +48,7 @@
 
 ## 📥 下载安装
 
-### 方式一：直接下载（推荐）
+### 方式一：直接下载（推荐，开箱即用）
 
 到 [**Releases**](https://github.com/CaroNiu/Sticker-packs/releases/latest) 下载对应平台：
 
@@ -57,6 +57,9 @@
 | `StickerWorkshop-vX.X.X-win.exe` | Windows | 双击即用 |
 | `StickerWorkshop-vX.X.X-mac-arm64.zip` | macOS (Apple Silicon) | 解压 → 拖进「应用程序」→ **右键 → 打开**（未签名，首次需右键绕过 Gatekeeper） |
 | `StickerWorkshop-vX.X.X-mac-intel.zip` | macOS (Intel) | 同上 |
+
+> **不需要安装 Claude / Claude Code，也不需要装任何 skill**——出图提示词、GIF 压缩、
+> 微信规范检查逻辑已全部内置在应用里，下载即用。你只需要一个大模型的 API Key（设置里填）。
 
 首次运行在程序旁生成 `config.json`（填模型配置）和 `packs/`（作品目录）；
 macOS 的数据在 `~/Library/Application Support/StickerWorkshop/`。
@@ -67,14 +70,22 @@ macOS 的数据在 `~/Library/Application Support/StickerWorkshop/`。
 git clone https://github.com/CaroNiu/Sticker-packs.git
 cd Sticker-packs
 pip install -r requirements.txt   # PySide6 + Pillow
+python setup_skill.py             # 一键拉取上游 skill 脚本副本（仅首次，见下方说明）
 python main.py
 ```
 
-依赖的 skill 脚本（提示词、GIF 压缩、规范检查逻辑）首次使用前装一次：
+`setup_skill.py` 做的事：把上游 [imraywang/ray-sticker-shop](https://github.com/imraywang/ray-sticker-shop)
+的 `sticker.py`（提示词 + GIF 压缩 + 规范检查逻辑，一个普通 Python 脚本，**不是 Claude 插件、无需 Claude Code**）
+复制到本项目的 `vendor/` 目录，源码运行时自动加载。已装过该 skill 的可用
+`python setup_skill.py --skill-dir ~/.claude/skills/ray-sticker-shop` 走本地副本。
 
-```bash
-git clone https://github.com/imraywang/ray-sticker-shop ~/.claude/skills/ray-sticker-shop
-```
+### 功能依赖一览
+
+| 功能 | 依赖 |
+|---|---|
+| 全部核心流程（角色图 / 文案 / 生成 / 合成 / 检查 / 投稿包） | exe 内置，源码版由 `vendor/sticker.py` 提供 |
+| 大模型调用 | 你自己的 API Key（任意 OpenAI 兼容服务，见下方模型配置） |
+| 无 Key 手动出图模式 | 零依赖（复制提示词去 ChatGPT 出图，回来点合成） |
 
 ## 🤖 模型配置（不锁定厂商）
 
@@ -147,7 +158,7 @@ for f in test_*.py; do python "$f"; done
 
 ## 🙏 致谢
 
-- [imraywang/ray-sticker-shop](https://github.com/imraywang/ray-sticker-shop) —— 出图提示词、GIF 压缩、微信规范检查全部来自该 skill 本体，本项目是其图形界面封装
+- [imraywang/ray-sticker-shop](https://github.com/imraywang/ray-sticker-shop) —— 出图提示词、GIF 压缩、微信规范检查全部来自该 skill 本体，本项目是其图形界面封装。**许可说明**：该上游仓库暂未附带 LICENSE（版权归上游作者所有），本仓库的 MIT 仅覆盖 GUI 封装部分；内置分发已注明来源，如需商用请自行与上游作者确认。
 
 ## License
 

@@ -227,7 +227,10 @@ class ApiLogPanel(QWidget):
         self.cb = QCheckBox("显示后台调用日志（请求/重试/耗时，排查卡顿用）")
         self.cb.toggled.connect(self._toggle)
         top.addWidget(self.cb)
-        top.addStretch(1)
+        # 状态槽：宿主页面可把任务进度写在这行（和日志集中展示），不用的面板保持空白
+        self.lbl_status = QLabel("")
+        self.lbl_status.setStyleSheet("color: #C43D3D; font-weight: 600;")
+        top.addWidget(self.lbl_status, 1)
         btn_clear = QPushButton("清空")
         btn_clear.clicked.connect(lambda: self.txt.clear())
         top.addWidget(btn_clear)
@@ -699,7 +702,8 @@ class IdeasDialog(QDialog):
             "设置里换非思考模型（如 deepseek-chat、glm-4-flash）10–30 秒。")
         self.lbl_state.setWordWrap(True)
         foot.addWidget(self.lbl_state, 1)
-        b_fill = QPushButton("把选中词填入灵感提示")
+        b_fill = QPushButton("✨ 用选中词生成整套文案")
+        b_fill.setToolTip("把勾选的词拼进灵感提示，关闭本窗口并直接触发「AI 生成整套文案」")
         b_fill.clicked.connect(self._fill)
         foot.addWidget(b_fill)
         v.addLayout(foot)
@@ -788,7 +792,8 @@ class IdeasDialog(QDialog):
         topic = self.ed_topic.text().strip()
         hint = (f"{topic}；" if topic else "") + "抽象梗方向，重点覆盖这些词：" + "、".join(words)
         self.main.ed_hint.setText(hint)
-        self.accept()
+        self.accept()          # 关闭创意对话框
+        self.main.ai_copy()    # 直接触发 AI 生成整套文案，省一次手动点击
 
 
 class MainWindow(QMainWindow):
@@ -1043,7 +1048,7 @@ class MainWindow(QMainWindow):
             return False
 
     def _tick(self):
-        """长任务每秒刷新：① 显示已用时，③ 显示已用时+预计剩余。"""
+        """长任务每秒刷新：① 显示已用时，② 进度写进日志面板标题行，③ 已用时+预计剩余。"""
         if not (self._worker_alive() and self._busy_step is not None):
             return
         el = time.monotonic() - self._busy_t0
@@ -1051,7 +1056,10 @@ class MainWindow(QMainWindow):
             self.char_status.setText(
                 f"⏳ 生成中… 已用 {_fmt_mmss(el)}（一张约 1–2 分钟，别关窗口）")
         elif self._busy_step == 1:
-            self.statusBar().showMessage(f"AI 正在写文案… 已用 {_fmt_mmss(el)}")
+            msg = f"⏳ AI 正在写文案… 已用 {_fmt_mmss(el)}"
+            if el > 60:
+                msg += "（思考型模型要 1–5 分钟，属正常）"
+            self.api_log_panel_pack.lbl_status.setText(msg)
         elif self._busy_step == 2:
             txt = f"⏳ 已用 {_fmt_mmss(el)}"
             if self.gen_done and self.gen_total > self.gen_done:
@@ -1163,6 +1171,9 @@ class MainWindow(QMainWindow):
         pm = QPixmap(result["out"])
         self.lbl_char_preview.setPixmap(
             pm.scaled(self.lbl_char_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        # 风格一致性：角色图用哪个风格画的，第②步的风格补充就跟着用同一个，
+        # 否则文案和精灵图会和角色图画风脱节（②步仍可手动改）
+        _set_combo_style(self.cb_pack_style, _combo_style(self.cb_char_style))
         self.refresh_cost()
         self._refresh_overview()
 
@@ -1227,6 +1238,9 @@ class MainWindow(QMainWindow):
         for label, en in STYLES:
             self.cb_pack_style.addItem(label, en)
         gen_form.addRow("角色风格补充", self.cb_pack_style)
+        self.cb_pack_style.setToolTip(
+            "默认自动跟随第①步的角色风格（生成角色图时同步过来），保持前后画风一致。\n"
+            "想让精灵图用不同画风可在这里手动改；存进 pack.json 随项目走。")
         self.sp_ms = QSpinBox()
         self.sp_ms.setRange(30, 600)
         self.sp_ms.setSuffix(" ms/帧")
@@ -1294,14 +1308,20 @@ class MainWindow(QMainWindow):
                 "设置 → 参数设置 → 「文案对话模型」里填模型名和 Key（可用和图片不同的账号）。")
             return
         self.btn_ai.setEnabled(False)
-        self.lbl_validate.setText("⏳ AI 正在写文案…（约 10-30 秒）")
+        # 日志进度直接展示：进度状态写在日志面板标题行（和日志集中一处），
+        # 写文案期间自动展开调用日志（请求/重试/耗时实时滚动），结束后保持展开可手动收起
+        self.api_log_panel_pack.cb.setChecked(True)
+        self.api_log_panel_pack.lbl_status.setText("⏳ AI 正在写文案…（约 10-30 秒）")
+        self.lbl_validate.setText("")
         self._run("AI 正在写文案…", core.ai_copywriting, self.cfg,
-                  self.ed_hint.text().strip(), self.cb_pack_style.currentText().strip(),
+                  self.ed_hint.text().strip(), _combo_style(self.cb_pack_style),
                   step=1, on_done=self._on_ai_copy,
-                  on_fail=lambda m: self.lbl_validate.setText(f"❌ AI 文案失败：{m[:160]}"))
+                  on_fail=lambda m: (self.api_log_panel_pack.lbl_status.setText(""),
+                                     self.lbl_validate.setText(f"❌ AI 文案失败：{m[:160]}")))
 
     def _on_ai_copy(self, r):
         self.btn_ai.setEnabled(True)
+        self.api_log_panel_pack.lbl_status.setText("")
         self.ed_name.setText(r.get("name", ""))
         self.ed_intro.setPlainText(r.get("intro", ""))
         if r.get("reward_line"):
@@ -1364,7 +1384,11 @@ class MainWindow(QMainWindow):
         self.ed_intro.setPlainText(pack.get("intro", ""))
         self.ed_copyright.setText(pack.get("copyright", ""))
         self.ed_reward.setText(pack.get("reward_line", ""))
-        _set_combo_style(self.cb_pack_style, pack.get("style", ""))
+        if pack.get("style", "").strip():
+            _set_combo_style(self.cb_pack_style, pack.get("style"))
+        else:
+            # 新项目 style 为空：跟随第①步当前选择，避免前后画风不一致
+            _set_combo_style(self.cb_pack_style, _combo_style(self.cb_char_style))
         self.ed_char_desc.setText(pack.get("character_desc", ""))
         self.sp_ms.setValue(int(pack.get("frame_ms", 120)))
         self.cb_bg.setCurrentText(pack.get("background", "transparent"))

@@ -69,13 +69,19 @@ def _make_icon():
 
 
 def main():
-    if not SKILL.exists():
-        sys.exit(f"找不到 skill：{SKILL}\n"
-                 "先 git clone https://github.com/imraywang/ray-sticker-shop "
+    # skill 副本来源（优先级）：本机已装（跟随上游更新）→ vendor/ 已有副本（setup_skill.py 生成的）
+    src = SKILL if SKILL.exists() else (VENDOR / "sticker.py" if (VENDOR / "sticker.py").exists() else None)
+    if src is None:
+        sys.exit(f"找不到 skill：本机没装（{SKILL}），vendor/ 也没有副本。\n"
+                 "跑一次 python setup_skill.py（自动从上游拉取），或先 "
+                 "git clone https://github.com/imraywang/ray-sticker-shop "
                  "~/.claude/skills/ray-sticker-shop 再打包。")
     VENDOR.mkdir(exist_ok=True)
-    shutil.copy2(SKILL, VENDOR / "sticker.py")
-    print("✓ 已复制 skill 副本 → vendor/sticker.py（随应用内置分发）")
+    if src.resolve() != (VENDOR / "sticker.py").resolve():
+        shutil.copy2(src, VENDOR / "sticker.py")
+        print(f"✓ 已复制 skill 副本 → vendor/sticker.py（来源：{src}）")
+    else:
+        print("✓ 使用 vendor/ 里已有的 skill 副本")
 
     icon = _make_icon()
     print(f"✓ 已生成应用图标 → {icon.name}")
