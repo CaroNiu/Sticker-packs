@@ -993,6 +993,19 @@ class MainWindow(QMainWindow):
             nav.addWidget(b)
             self.step_btns.append(b)
         nav.addStretch(1)
+        # ⚡ 即兴生成：轻流程入口（参考图+一句话→单张 GIF），与四步套图并列常驻
+        self.btn_quick = QPushButton("⚡ 即兴生成\n（单张表情）")
+        self.btn_quick.setMinimumHeight(48)
+        self.btn_quick.setMinimumWidth(150)
+        self.btn_quick.setToolTip(
+            "不建项目、不写整套文案：给一张参考图 + 一句话想法，\n"
+            "约 2 分钟直接出一张能发的表情动图（存 quick/ 目录）。")
+        self.btn_quick.setStyleSheet(
+            "QPushButton{color:#D9502A;border:2px solid #F2653A;border-radius:10px;"
+            "padding:4px 12px;background:#FDF0EB;font-weight:600;}"
+            "QPushButton:hover{background:#FCE4DB;}")
+        self.btn_quick.clicked.connect(self._open_quick)
+        nav.addWidget(self.btn_quick)
         # 全局「戒断」按钮：任何阶段的任务运行中都可见可用，点了走协作式取消
         self.btn_stop = QPushButton("⛔ 停止任务")
         self.btn_stop.setEnabled(False)
