@@ -23,15 +23,46 @@ import core
 import theme
 from theme import apply_theme
 
+# 角色风格预设：(中文描述（下拉显示）, 英文提示词（传给模型）)。
+# 默认首位：熊猫头式情绪原型（大头、表情浓度、自带态度的脸）
 STYLES = [
-    # 默认首位：熊猫头式情绪原型（大头、表情浓度、自带态度的脸）
-    "meme-style cartoon, oversized expressive head, tiny simple body, thick clean outlines, flat colors, smug cheeky default face",
-    "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors",
-    "thick clean dark outlines, flat colors",
-    "hand-drawn crayon doodle style, grainy texture",
-    "kawaii pastel style, soft round shapes",
-    "pixel art style, chunky pixels",
+    ("熊猫头情绪原型：大头＋态度脸（默认）",
+     "meme-style cartoon, oversized expressive head, tiny simple body, thick clean outlines, flat colors, smug cheeky default face"),
+    ("可爱Q版二头身：圆润软萌治愈",
+     "cute chibi, two-head-tall, thick clean dark outlines, flat soft colors"),
+    ("简洁扁平：厚描边纯色块",
+     "thick clean dark outlines, flat colors"),
+    ("手绘蜡笔涂鸦：颗粒质感",
+     "hand-drawn crayon doodle style, grainy texture"),
+    ("马卡龙治愈：柔和粉彩",
+     "kawaii pastel style, soft round shapes"),
+    ("像素风：大颗粒像素点",
+     "pixel art style, chunky pixels"),
 ]
+
+
+def _combo_style(cb):
+    """风格下拉取值：选中预设返回英文提示词（userData），手输/历史值原样返回。
+
+    可编辑下拉的 currentData 永远滞留在当前 index 的预设上——用户手输自定义风格
+    （未回车）后直接点生成，currentIndex 没变，currentData 还是旧预设的英文。
+    判据用「当前 index 的显示文本是否等于当前文本」：相等=选中了预设，取英文；
+    不等=手输或历史自定义值，取原文。
+    """
+    if cb.currentIndex() >= 0 and cb.itemText(cb.currentIndex()) == cb.currentText():
+        d = cb.currentData()
+        if d:
+            return d
+    return cb.currentText().strip()
+
+
+def _set_combo_style(cb, value):
+    """按英文提示词回选预设项；不匹配（历史项目/自定义风格）就原样显示可编辑文本。"""
+    for i in range(cb.count()):
+        if cb.itemData(i) == value:
+            cb.setCurrentIndex(i)
+            return
+    cb.setCurrentText(value)
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
@@ -1024,8 +1055,9 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
         self.cb_char_style = QComboBox()
         self.cb_char_style.setEditable(True)
-        self.cb_char_style.addItems(STYLES)
-        self.cb_char_style.setCurrentText(self.cfg.get("style", STYLES[0]))
+        for label, en in STYLES:
+            self.cb_char_style.addItem(label, en)
+        _set_combo_style(self.cb_char_style, self.cfg.get("style", STYLES[0][1]))
         self.cb_char_style.setToolTip(
             "默认第一项是「熊猫头式情绪原型」：大头、表情浓度拉满、自带态度的脸。\n"
             "这张基准脸会传导到全套每张表情——想要温和治愈风就换可爱 Q 版。")
@@ -1084,7 +1116,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "缺照片", "请先上传或拖入一张照片。")
             return
         out = self.pack_dir / "character.png"
-        style = self.cb_char_style.currentText().strip() or STYLES[0]
+        style = _combo_style(self.cb_char_style) or STYLES[0][1]
         desc = self.ed_char_desc.text().strip()
         self.char_status.setText("⏳ 提交生成…")
         self._run("正在生成角色图…", core.make_character, self.sticker, self.cfg,
@@ -1157,7 +1189,8 @@ class MainWindow(QMainWindow):
         gen_form = QFormLayout(gen_box)
         self.cb_pack_style = QComboBox()
         self.cb_pack_style.setEditable(True)
-        self.cb_pack_style.addItems(STYLES)
+        for label, en in STYLES:
+            self.cb_pack_style.addItem(label, en)
         gen_form.addRow("角色风格补充", self.cb_pack_style)
         self.sp_ms = QSpinBox()
         self.sp_ms.setRange(30, 600)
@@ -1275,7 +1308,7 @@ class MainWindow(QMainWindow):
             "reward_line": self.ed_reward.text().strip(),
             "character": "character.png",
             "character_desc": self.ed_char_desc.text().strip(),
-            "style": self.cb_pack_style.currentText().strip(),
+            "style": _combo_style(self.cb_pack_style),
             "frame_ms": self.sp_ms.value(),
             "background": self.cb_bg.currentText(),
             "stickers": [],
@@ -1293,7 +1326,7 @@ class MainWindow(QMainWindow):
         self.ed_intro.setPlainText(pack.get("intro", ""))
         self.ed_copyright.setText(pack.get("copyright", ""))
         self.ed_reward.setText(pack.get("reward_line", ""))
-        self.cb_pack_style.setCurrentText(pack.get("style", ""))
+        _set_combo_style(self.cb_pack_style, pack.get("style", ""))
         self.ed_char_desc.setText(pack.get("character_desc", ""))
         self.sp_ms.setValue(int(pack.get("frame_ms", 120)))
         self.cb_bg.setCurrentText(pack.get("background", "transparent"))
